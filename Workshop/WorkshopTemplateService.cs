@@ -7,6 +7,7 @@ internal static class WorkshopTemplateService
     public static WorkshopMetadata EnsureTemplate(LocalModInfo mod)
     {
         Directory.CreateDirectory(WorkshopPaths.RecordDirectory(mod.Path));
+        WorkshopPaths.MigrateLegacyRecordFiles(mod.Path);
 
         var metadataPath = WorkshopPaths.MetadataFile(mod.Path);
         var metadata = WorkshopJson.Read<WorkshopMetadata>(metadataPath);

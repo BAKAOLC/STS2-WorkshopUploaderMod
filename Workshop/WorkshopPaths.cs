@@ -6,8 +6,10 @@ namespace STS2WorkshopUploader.Workshop;
 internal static class WorkshopPaths
 {
     public const string RecordDirectoryName = ".sts2-workshop-uploader";
-    public const string MetadataFileName = "workshop.json";
-    public const string StateFileName = "state.json";
+    public const string MetadataFileName = "workshop.workshop";
+    public const string StateFileName = "state.workshop";
+    public const string LegacyMetadataFileName = "workshop.json";
+    public const string LegacyStateFileName = "state.json";
     public const string PreviewFileName = "preview.png";
     public const string PlaceholderPreviewResourceName = "STS2WorkshopUploader.Data.workshop_placeholder.png";
     public const string TitleFileName = "title.txt";
@@ -32,9 +34,36 @@ internal static class WorkshopPaths
         return Path.Combine(RecordDirectory(modPath), MetadataFileName);
     }
 
+    public static string LegacyMetadataFile(string modPath)
+    {
+        return Path.Combine(RecordDirectory(modPath), LegacyMetadataFileName);
+    }
+
     public static string StateFile(string modPath)
     {
         return Path.Combine(RecordDirectory(modPath), StateFileName);
+    }
+
+    public static string LegacyStateFile(string modPath)
+    {
+        return Path.Combine(RecordDirectory(modPath), LegacyStateFileName);
+    }
+
+    public static void MigrateLegacyRecordFiles(string modPath)
+    {
+        MoveLegacyFile(LegacyMetadataFile(modPath), MetadataFile(modPath));
+        MoveLegacyFile(LegacyStateFile(modPath), StateFile(modPath));
+    }
+
+    private static void MoveLegacyFile(string oldPath, string newPath)
+    {
+        if (!File.Exists(oldPath) || File.Exists(newPath))
+            return;
+
+        var dir = Path.GetDirectoryName(newPath);
+        if (!string.IsNullOrWhiteSpace(dir))
+            Directory.CreateDirectory(dir);
+        File.Move(oldPath, newPath);
     }
 
     public static string PreviewFile(string modPath)
