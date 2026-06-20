@@ -28,6 +28,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private readonly Dictionary<string, List<Label>> _changeBadgeLabels = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<ulong, WorkshopItemSummary> _dependencyTitles = [];
+    private readonly HashSet<string> _draftChangedSlots = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _excludePatterns = [];
     private readonly List<LocalModInfo> _mods = [];
     private readonly List<Button> _openWorkshopButtons = [];
@@ -53,7 +54,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private Label _dependencySummary = null!;
     private TextEdit _description = null!;
     private HashSet<string>? _detectedChanges;
-    private int _draftRefreshSerial;
+    private bool _draftTextDirty;
     private Control _excludePopup = null!;
     private VBoxContainer _excludePopupBody = null!;
     private GridContainer _excludeRows = null!;
@@ -484,8 +485,12 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         _workshopId.TextChanged += _text =>
         {
             UpdateWorkshopPageButtons();
+            MarkDraftTextDirty();
+        };
+        _workshopId.FocusExited += () =>
+        {
+            CommitDraftTextIfDirty();
             _ = RefreshUploadPermissionAsync();
-            QueuePersistDraftAndRefreshChangeState();
         };
         AddRow(T("Workshop item id"), _workshopId, CreateButton(T("Unbind"), () =>
         {
@@ -504,20 +509,22 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         {
             if (_loadingMetadataLanguage)
                 return;
+            CommitDraftTextIfDirty();
             SaveCurrentLanguageText();
             _metadataLanguage = language;
             LoadLanguageText();
-            RefreshChangeState();
+            RefreshChangeBadge("title");
+            RefreshChangeBadge("description");
         });
         AddRow(T("Text language"), Row(FixedField(_metadataLanguageSelect, 620f),
                 CreateButton(T("Manage Languages"), OpenLanguagePopup)), updateKey: "localized",
             updateLabel: T("Allow"), updateValue: metadata.Update.Localized);
         _title = CreateLine(ReadText(WorkshopPaths.TitleFile(mod.Path), metadata.Title ?? mod.Name));
-        TrackDraftChanges(_title);
+        TrackDraftChanges(_title, "title");
         AddRow(T("Title"), _title, updateKey: "title", updateLabel: T("Allow"),
             updateValue: metadata.Update.Title);
         _description = CreateText(ReadText(WorkshopPaths.DescriptionMarkdownFile(mod.Path), ""));
-        TrackDraftChanges(_description);
+        TrackDraftChanges(_description, "description");
         AddTextEditorRow(T("Summary / Description (Markdown)"), _description, updateKey: "description",
             updateLabel: T("Allow"),
             updateValue: metadata.Update.Description);
@@ -533,7 +540,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             value =>
             {
                 _visibilityValue = value;
-                PersistDraftAndRefreshChangeState();
+                SaveDraftAndRefreshChangedSlots("visibility");
             });
         AddRow(T("Visibility"), RightAligned(FixedField(_visibility, 360f)),
             updateKey: "visibility", updateLabel: T("Allow"), updateValue: metadata.Update.Visibility);
@@ -546,8 +553,8 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             T("Allow"), metadata.Update.Tags);
         _minBranch = CreateLine(metadata.MinBranch ?? "");
         _maxBranch = CreateLine(metadata.MaxBranch ?? "");
-        TrackDraftChanges(_minBranch);
-        TrackDraftChanges(_maxBranch);
+        TrackDraftChanges(_minBranch, "gameVersions");
+        TrackDraftChanges(_maxBranch, "gameVersions");
         AddRow(T("Required game versions"), Row(_minBranch, _maxBranch), updateKey: "gameVersions",
             updateLabel: T("Allow"),
             updateValue: metadata.Update.GameVersions);
@@ -595,7 +602,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 value =>
                 {
                     _autoOpenWorkshopAfterUpload = value;
-                    PersistDraftAndRefreshChangeState();
+                    SaveDraftMetadata();
                 })));
         _permissionStatus = CreateMuted(T("Checking Workshop edit permission..."));
         CurrentContainer().AddChild(_permissionStatus);
@@ -940,28 +947,45 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         SaveMetadataCore(true);
     }
 
-    private void PersistDraftAndRefreshChangeState()
+    private void SaveDraftAndRefreshChangedSlots(params string[] keys)
     {
         if (_loadingMetadataLanguage || _selected == null)
             return;
 
-        SaveMetadataCore(false);
+        SaveDraftMetadata();
+        RefreshChangedSlots(keys);
     }
 
-    private async void QueuePersistDraftAndRefreshChangeState()
+    private void MarkDraftTextDirty(params string[] keys)
     {
         if (_loadingMetadataLanguage || _selected == null)
             return;
 
-        var serial = ++_draftRefreshSerial;
-        await ToSignal(GetTree().CreateTimer(0.12d), SceneTreeTimer.SignalName.Timeout);
-        if (serial != _draftRefreshSerial || _loadingMetadataLanguage || _selected == null)
+        _draftTextDirty = true;
+        foreach (var key in keys)
+            _draftChangedSlots.Add(key);
+        RefreshChangedSlots(keys);
+    }
+
+    private void CommitDraftTextIfDirty()
+    {
+        if (!_draftTextDirty)
             return;
 
-        PersistDraftAndRefreshChangeState();
+        var keys = _draftChangedSlots.ToArray();
+        SaveDraftMetadata();
+        RefreshChangedSlots(keys);
     }
 
     private void SaveMetadataCore(bool showActivity)
+    {
+        SaveDraftMetadata();
+        RefreshChangeState();
+        if (showActivity)
+            SetActivity(T("Metadata saved."));
+    }
+
+    private void SaveDraftMetadata()
     {
         if (_selected == null)
             return;
@@ -988,9 +1012,8 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         WorkshopJson.Write(WorkshopPaths.MetadataFile(_selected.Path), metadata);
         if (_changeNote != null)
             File.WriteAllText(WorkshopPaths.ChangeNoteMarkdownFile(_selected.Path), _changeNote.Text);
-        RefreshChangeState();
-        if (showActivity)
-            SetActivity(T("Metadata saved."));
+        _draftTextDirty = false;
+        _draftChangedSlots.Clear();
     }
 
     private async Task RefreshUploadPermissionAsync()
@@ -1635,8 +1658,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 File.Copy(source, target, true);
                 RefreshPreviewTexture(target);
                 _previewStatus.Text = target;
-                SaveMetadata();
-                RefreshChangeState();
+                SaveDraftAndRefreshChangedSlots("preview");
             }
             finally
             {
@@ -1679,7 +1701,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 if (_tagSummary != null)
                     _tagSummary.Text = FormatTags();
                 _tagPopup.Hide();
-                SaveMetadata();
+                SaveDraftAndRefreshChangedSlots("tags");
             }, ModSettingsButtonTone.Accent),
             CreateButton(T("Close"), () => _tagPopup.Hide()));
     }
@@ -1951,7 +1973,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         var metadata = WorkshopMetadataEditor.LoadOrCreate(_selected);
         RebuildDependencies(metadata);
         RebuildCurrentDependencyList();
-        RefreshChangeState();
+        RefreshChangedSlots("dependencies");
     }
 
     private void RemoveDependency(ulong id)
@@ -1963,7 +1985,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         var metadata = WorkshopMetadataEditor.LoadOrCreate(_selected);
         RebuildDependencies(metadata);
         RebuildCurrentDependencyList();
-        RefreshChangeState();
+        RefreshChangedSlots("dependencies");
     }
 
     private async Task ResolveDependencyTitlesAsync()
@@ -2472,7 +2494,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         var check = new ModSettingsToggleControl(value, checkedValue =>
         {
             _updateChecks[key] = checkedValue;
-            PersistDraftAndRefreshChangeState();
+            SaveDraftMetadata();
         })
         {
             SizeFlagsHorizontal = SizeFlags.ShrinkEnd,
@@ -2628,6 +2650,142 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         return languages.Count;
     }
 
+    private void RefreshChangedSlots(params string[] keys)
+    {
+        if (_selected == null || _detectedChanges == null || keys.Length == 0)
+            return;
+
+        var changedLanguageState = false;
+        foreach (var rawKey in keys.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(rawKey))
+                continue;
+
+            var key = ResolveChangeKeyForCurrentLanguage(rawKey);
+            changedLanguageState |= RefreshDetectedChangeKey(key);
+            RefreshChangeBadge(rawKey);
+            if (!string.Equals(key, rawKey, StringComparison.OrdinalIgnoreCase))
+                RefreshChangeBadge(key);
+        }
+
+        if (keys.Any(key => key.Equals("title", StringComparison.OrdinalIgnoreCase) ||
+                            key.Equals("description", StringComparison.OrdinalIgnoreCase) ||
+                            key.StartsWith("localized:", StringComparison.OrdinalIgnoreCase)))
+        {
+            RefreshChangeBadge("localized");
+            if (changedLanguageState)
+                RefreshLanguageChoiceLabels();
+        }
+    }
+
+    private bool RefreshDetectedChangeKey(string key)
+    {
+        if (_selected == null || _detectedChanges == null)
+            return false;
+
+        var fingerprint = ComputeCurrentFingerprint(key);
+        if (fingerprint == null)
+            return false;
+
+        var state = WorkshopJson.Read<WorkshopUploadState>(WorkshopPaths.StateFile(_selected.Path)) ??
+                    new WorkshopUploadState();
+        var changed = !state.Fingerprints.TryGetValue(key, out var old) ||
+                      !string.Equals(old, fingerprint, StringComparison.Ordinal);
+        return changed ? _detectedChanges.Add(key) : _detectedChanges.Remove(key);
+    }
+
+    private string? ComputeCurrentFingerprint(string key)
+    {
+        if (_selected == null)
+            return null;
+
+        if (TryParseLocalizedChangeKey(key, out var language, out var field))
+            return ComputeLocalizedFingerprint(language, field);
+
+        var metadata = WorkshopMetadataEditor.LoadOrCreate(_selected);
+        return key.ToLowerInvariant() switch
+        {
+            "title" => WorkshopFingerprint.Text(string.IsNullOrWhiteSpace(_title?.Text)
+                ? metadata.Title
+                : _title.Text.Trim()),
+            "description" => WorkshopFingerprint.Text(string.IsNullOrWhiteSpace(_description?.Text)
+                ? metadata.Description
+                : MarkdownToSteamBbCode.Convert(_description.Text)),
+            "visibility" => WorkshopFingerprint.Text(_visibilityValue),
+            "tags" => WorkshopFingerprint.Text(string.Join('\n',
+                _tagSelection.Order(StringComparer.OrdinalIgnoreCase))),
+            "dependencies" => WorkshopFingerprint.Text(string.Join('\n',
+                metadata.Dependencies.Order())),
+            "gameversions" => WorkshopFingerprint.Text(FormatGameVersionFingerprintText()),
+            "preview" => WorkshopFingerprint.File(WorkshopPaths.PreviewFile(_selected.Path)),
+            _ => null
+        };
+    }
+
+    private string? ComputeLocalizedFingerprint(string language, string field)
+    {
+        if (_selected == null)
+            return null;
+
+        LocalizedWorkshopText? text = null;
+        if (string.Equals(language, _metadataLanguage, StringComparison.OrdinalIgnoreCase))
+            text = new LocalizedWorkshopText
+            {
+                Title = string.IsNullOrWhiteSpace(_title?.Text) ? null : _title.Text.Trim(),
+                Description = string.IsNullOrWhiteSpace(_description?.Text)
+                    ? null
+                    : MarkdownToSteamBbCode.Convert(_description.Text)
+            };
+        else
+            text = WorkshopTemplateService.LoadEffectiveMetadata(_selected)
+                .Localized.GetValueOrDefault(language);
+
+        return field.ToLowerInvariant() switch
+        {
+            "title" => WorkshopFingerprint.Text(text?.Title),
+            "description" => WorkshopFingerprint.Text(text?.Description),
+            _ => null
+        };
+    }
+
+    private string FormatGameVersionFingerprintText()
+    {
+        var min = BlankToNull(_minBranch?.Text ?? string.Empty);
+        var max = BlankToNull(_maxBranch?.Text ?? string.Empty);
+        return $"{min}\n{max}";
+    }
+
+    private static bool TryParseLocalizedChangeKey(string key, out string language, out string field)
+    {
+        language = string.Empty;
+        field = string.Empty;
+        const string prefix = "localized:";
+        if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var rest = key[prefix.Length..];
+        var separator = rest.IndexOf(':', StringComparison.Ordinal);
+        if (separator <= 0 || separator == rest.Length - 1)
+            return false;
+
+        language = rest[..separator];
+        field = rest[(separator + 1)..];
+        return true;
+    }
+
+    private void RefreshChangeBadge(string key)
+    {
+        if (!_changeBadgeLabels.TryGetValue(key, out var labels))
+            return;
+
+        var (text, color) = ResolveChangeBadge(key);
+        foreach (var label in labels.Where(IsInstanceValid))
+        {
+            label.Text = text;
+            label.AddThemeColorOverride("font_color", color);
+        }
+    }
+
     private void RefreshChangeState()
     {
         if (_selected == null)
@@ -2663,14 +2821,16 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         }
     }
 
-    private void TrackDraftChanges(LineEdit line)
+    private void TrackDraftChanges(LineEdit line, params string[] keys)
     {
-        line.TextChanged += _ => QueuePersistDraftAndRefreshChangeState();
+        line.TextChanged += _ => MarkDraftTextDirty(keys);
+        line.FocusExited += CommitDraftTextIfDirty;
     }
 
-    private void TrackDraftChanges(TextEdit text)
+    private void TrackDraftChanges(TextEdit text, params string[] keys)
     {
-        text.TextChanged += QueuePersistDraftAndRefreshChangeState;
+        text.TextChanged += () => MarkDraftTextDirty(keys);
+        text.FocusExited += CommitDraftTextIfDirty;
     }
 
     private static HashSet<string>? TryDetectMetadataChanges(LocalModInfo mod)

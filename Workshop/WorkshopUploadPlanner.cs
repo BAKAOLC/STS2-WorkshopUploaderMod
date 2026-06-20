@@ -10,7 +10,9 @@ internal static class WorkshopUploadPlanner
         if (metadata.WorkshopItemId == null && state.WorkshopItemId != null)
             metadata.WorkshopItemId = state.WorkshopItemId;
 
-        var contentFiles = StagingBuilder.EnumerateIncludedFiles(mod, metadata);
+        var contentFiles = mode == WorkshopUploadMode.Full
+            ? StagingBuilder.EnumerateIncludedFiles(mod, metadata)
+            : [];
         string? staging = null;
         if (mode == WorkshopUploadMode.Full && metadata.Update.Content)
             staging = StagingBuilder.Build(mod, metadata);
@@ -54,7 +56,8 @@ internal static class WorkshopUploadPlanner
             ["preview"] = WorkshopFingerprint.File(WorkshopPaths.PreviewFile(mod.Path))
         };
 
-        result["content"] = WorkshopFingerprint.ContentManifest(contentFiles);
+        if (mode == WorkshopUploadMode.Full)
+            result["content"] = WorkshopFingerprint.ContentManifest(contentFiles);
 
         foreach (var (language, text) in metadata.Localized)
         {
