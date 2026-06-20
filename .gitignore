@@ -1,0 +1,22 @@
+# Godot / C# build output
+.godot/
+bin/
+obj/
+
+# IDE and user-local files
+.idea/
+.vs/
+*.user
+*.suo
+*.DotSettings.user
+
+# Local machine configuration
+local.props
+
+# Logs and transient files
+*.log
+*.tmp
+*.bak
+
+# Uploader-generated staging/content records when testing against this project itself
+.sts2-workshop-uploader/
