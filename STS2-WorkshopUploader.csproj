@@ -21,7 +21,7 @@
     <PropertyGroup>
         <Sts2Dir Condition="'$(Sts2Dir)' == ''">E:\SteamLibrary\steamapps\common\Slay the Spire 2</Sts2Dir>
         <Sts2DataDir Condition="'$(Sts2DataDir)' == ''">$(Sts2Dir)\data_sts2_windows_x86_64</Sts2DataDir>
-        <RitsuLibDeployDir Condition="'$(RitsuLibDeployDir)' == ''">$(Sts2Dir)\mods\STS2-RitsuLib\</RitsuLibDeployDir>
+        <RitsuLibAutoCopy>false</RitsuLibAutoCopy>
     </PropertyGroup>
 
     <ItemGroup>

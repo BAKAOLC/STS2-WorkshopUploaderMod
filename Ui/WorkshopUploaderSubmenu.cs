@@ -14,7 +14,6 @@ namespace STS2WorkshopUploader.Ui;
 
 internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 {
-    private const int PageMarginHorizontal = 160;
     private const int PageMarginTop = 78;
     private const int PageMarginBottom = 72;
     private const int PanelMargin = 12;
@@ -67,11 +66,15 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private ModSettingsDropdownChoiceControl<string> _metadataLanguageSelect = null!;
     private LineEdit _minBranch = null!;
     private VBoxContainer _modList = null!;
+    private MarginContainer _pageFrame = null!;
     private int _permissionCheckSerial;
     private Label _permissionStatus = null!;
+    private readonly Dictionary<Control, Vector2I> _popupDesiredSizes = [];
     private TextureRect _previewImage = null!;
     private Label _previewStatus = null!;
+    private bool _resizeLayoutRefreshQueued;
     private LocalModInfo? _selected;
+    private PanelContainer _sidebarPanel = null!;
     private List<WorkshopTagOption> _tagOptions = [];
     private Control _tagPopup = null!;
     private VBoxContainer _tagPopupBody = null!;
@@ -99,6 +102,12 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         ConnectSignals();
         EnsureTagsRefreshedInBackground();
         RefreshMods();
+    }
+
+    public override void _Notification(int what)
+    {
+        if (what == NotificationResized)
+            QueueResizeLayoutRefresh();
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -181,13 +190,9 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         Name = "WorkshopUploaderSubmenu";
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
-        var frame = new MarginContainer { MouseFilter = MouseFilterEnum.Ignore };
-        frame.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        frame.AddThemeConstantOverride("margin_left", PageMarginHorizontal);
-        frame.AddThemeConstantOverride("margin_top", PageMarginTop);
-        frame.AddThemeConstantOverride("margin_right", PageMarginHorizontal);
-        frame.AddThemeConstantOverride("margin_bottom", PageMarginBottom);
-        AddChild(frame);
+        _pageFrame = new MarginContainer { MouseFilter = MouseFilterEnum.Ignore };
+        _pageFrame.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        AddChild(_pageFrame);
 
         var root = new VBoxContainer
         {
@@ -196,7 +201,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             MouseFilter = MouseFilterEnum.Ignore
         };
         root.AddThemeConstantOverride("separation", 12);
-        frame.AddChild(root);
+        _pageFrame.AddChild(root);
 
         var header = new HBoxContainer
         {
@@ -215,10 +220,9 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         body.AddThemeConstantOverride("separation", 14);
         root.AddChild(body);
 
-        var sidebarPanel = CreatePanel();
-        sidebarPanel.CustomMinimumSize = new Vector2(300f, 0f);
-        sidebarPanel.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
-        sidebarPanel.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _sidebarPanel = CreatePanel();
+        _sidebarPanel.SizeFlagsHorizontal = SizeFlags.ShrinkBegin;
+        _sidebarPanel.SizeFlagsVertical = SizeFlags.ExpandFill;
         var sidebarScroll = new ScrollContainer
         {
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
@@ -229,8 +233,8 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         _modList = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         _modList.AddThemeConstantOverride("separation", 6);
         AddScrollableContent(sidebarScroll, _modList);
-        sidebarPanel.AddChild(WrapWithMargin(sidebarScroll, DenseMargin));
-        body.AddChild(sidebarPanel);
+        _sidebarPanel.AddChild(WrapWithMargin(sidebarScroll, DenseMargin));
+        body.AddChild(_sidebarPanel);
 
         var contentPanel = CreatePanel();
         contentPanel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -260,6 +264,109 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         BuildTagPopup();
         BuildExcludePopup();
         BuildTaskOverlay();
+        ApplyResponsiveShellLayout();
+    }
+
+    private void ApplyResponsiveShellLayout()
+    {
+        if (_pageFrame == null || !IsInstanceValid(_pageFrame) ||
+            _sidebarPanel == null || !IsInstanceValid(_sidebarPanel))
+            return;
+
+        var viewport = GetViewportRect().Size;
+        var horizontalMargin = ResolvePageHorizontalMargin(viewport.X);
+        _pageFrame.AddThemeConstantOverride("margin_left", horizontalMargin);
+        _pageFrame.AddThemeConstantOverride("margin_right", horizontalMargin);
+        _pageFrame.AddThemeConstantOverride("margin_top", ResolvePageTopMargin(viewport.Y));
+        _pageFrame.AddThemeConstantOverride("margin_bottom", ResolvePageBottomMargin(viewport.Y));
+        _sidebarPanel.CustomMinimumSize = new Vector2(ResolveSidebarWidth(viewport.X), 0f);
+    }
+
+    private void QueueResizeLayoutRefresh()
+    {
+        if (!IsInsideTree())
+            return;
+
+        RefreshLayoutAfterResize();
+        if (_resizeLayoutRefreshQueued)
+            return;
+
+        _resizeLayoutRefreshQueued = true;
+        _ = FlushResizeLayoutRefreshDeferredAsync();
+    }
+
+    private async Task FlushResizeLayoutRefreshDeferredAsync()
+    {
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (IsInstanceValid(this))
+            FlushResizeLayoutRefresh();
+    }
+
+    private void FlushResizeLayoutRefresh()
+    {
+        _resizeLayoutRefreshQueued = false;
+        RefreshLayoutAfterResize();
+    }
+
+    private void RefreshLayoutAfterResize()
+    {
+        if (!IsInsideTree() || _pageFrame == null || !IsInstanceValid(_pageFrame))
+            return;
+
+        ApplyResponsiveShellLayout();
+        RequestRecursiveLayout(_pageFrame);
+        RefreshVisiblePopupLayouts();
+        if (_taskOverlay?.Visible == true)
+            ShowTaskOverlay();
+    }
+
+    private void RefreshVisiblePopupLayouts()
+    {
+        foreach (var (popup, size) in _popupDesiredSizes.ToArray())
+        {
+            if (!IsInstanceValid(popup))
+            {
+                _popupDesiredSizes.Remove(popup);
+                continue;
+            }
+
+            if (popup.Visible)
+                ShowPopup(popup, size.X, size.Y);
+        }
+    }
+
+    private static void RequestRecursiveLayout(Control root)
+    {
+        if (!IsInstanceValid(root))
+            return;
+
+        root.UpdateMinimumSize();
+        if (root is Container container)
+            container.QueueSort();
+
+        foreach (var child in root.GetChildren())
+            if (child is Control control)
+                RequestRecursiveLayout(control);
+    }
+
+    private static int ResolvePageHorizontalMargin(float width)
+    {
+        return (int)Mathf.Clamp(width * 0.07f, 36f, 160f);
+    }
+
+    private static int ResolvePageTopMargin(float height)
+    {
+        return (int)Mathf.Clamp(height * 0.08f, 52f, PageMarginTop);
+    }
+
+    private static int ResolvePageBottomMargin(float height)
+    {
+        return (int)Mathf.Clamp(height * 0.065f, 42f, PageMarginBottom);
+    }
+
+    private static float ResolveSidebarWidth(float width)
+    {
+        return Mathf.Clamp(width * 0.22f, 240f, 320f);
     }
 
     private void BuildBindPopup()
@@ -516,7 +623,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             RefreshChangeBadge("title");
             RefreshChangeBadge("description");
         });
-        AddRow(T("Text language"), Row(FixedField(_metadataLanguageSelect, 620f),
+        AddRow(T("Text language"), Row(FlexibleField(_metadataLanguageSelect, 320f),
                 CreateButton(T("Manage Languages"), OpenLanguagePopup)), updateKey: "localized",
             updateLabel: T("Allow"), updateValue: metadata.Update.Localized);
         _title = CreateLine(ReadText(WorkshopPaths.TitleFile(mod.Path), metadata.Title ?? mod.Name));
@@ -542,7 +649,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 _visibilityValue = value;
                 SaveDraftAndRefreshChangedSlots("visibility");
             });
-        AddRow(T("Visibility"), RightAligned(FixedField(_visibility, 360f)),
+        AddRow(T("Visibility"), RightAligned(FlexibleField(_visibility, 260f)),
             updateKey: "visibility", updateLabel: T("Allow"), updateValue: metadata.Update.Visibility);
 
         _tagSelection.Clear();
@@ -2892,6 +2999,22 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         return frame;
     }
 
+    private static Control FlexibleField(Control child, float minWidth, float height = 44f)
+    {
+        var frame = new Control
+        {
+            ClipContents = true,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ShrinkCenter,
+            CustomMinimumSize = new Vector2(minWidth, height)
+        };
+        child.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        child.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        child.SizeFlagsVertical = SizeFlags.ExpandFill;
+        frame.AddChild(child);
+        return frame;
+    }
+
     private static HBoxContainer RightAligned(params Control[] controls)
     {
         var row = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
@@ -3068,9 +3191,14 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 
     private void ShowPopup(Control popup, int desiredWidth, int desiredHeight)
     {
+        _popupDesiredSizes[popup] = new Vector2I(desiredWidth, desiredHeight);
         var viewport = GetViewportRect().Size;
-        var width = Math.Min(desiredWidth, Math.Max(720, (int)viewport.X - 96));
-        var height = Math.Min(desiredHeight, Math.Max(420, (int)viewport.Y - 120));
+        var sideMargin = ResolvePopupSideMargin(viewport.X);
+        var topMargin = ResolvePopupTopMargin(viewport.Y);
+        var availableWidth = Math.Max(420f, viewport.X - sideMargin * 2f);
+        var availableHeight = Math.Max(320f, viewport.Y - topMargin * 2f);
+        var width = Mathf.Min(desiredWidth, availableWidth);
+        var height = Mathf.Min(desiredHeight, availableHeight);
         popup.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         popup.Show();
         popup.MoveToFront();
@@ -3080,11 +3208,22 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         panel.Scale = Vector2.One;
         panel.Rotation = 0f;
         panel.ResetSize();
-        panel.Position = new Vector2(Mathf.Max(24f, (viewport.X - width) * 0.5f),
-            Mathf.Max(24f, (viewport.Y - height) * 0.5f));
+        panel.Position = new Vector2(Mathf.Max(sideMargin, (viewport.X - width) * 0.5f),
+            Mathf.Max(topMargin, (viewport.Y - height) * 0.5f));
         panel.Size = new Vector2(width, height);
         panel.SetDeferred(Control.PropertyName.Size, new Vector2(width, height));
         panel.CustomMinimumSize = Vector2.Zero;
+        RequestRecursiveLayout(panel);
+    }
+
+    private static float ResolvePopupSideMargin(float width)
+    {
+        return Mathf.Clamp(width * 0.045f, 24f, 64f);
+    }
+
+    private static float ResolvePopupTopMargin(float height)
+    {
+        return Mathf.Clamp(height * 0.055f, 24f, 56f);
     }
 
     private void BeginTaskOverlay(string title)
@@ -3413,7 +3552,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private static Label CreateFormLabel(string text, bool expand = false)
     {
         var label = CreateMuted(text);
-        label.CustomMinimumSize = expand ? Vector2.Zero : new Vector2(220f, 0f);
+        label.CustomMinimumSize = expand ? Vector2.Zero : new Vector2(180f, 0f);
         label.SizeFlagsHorizontal = expand ? SizeFlags.ExpandFill : SizeFlags.ShrinkBegin;
         label.AutowrapMode = expand ? TextServer.AutowrapMode.WordSmart : TextServer.AutowrapMode.Off;
         label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
