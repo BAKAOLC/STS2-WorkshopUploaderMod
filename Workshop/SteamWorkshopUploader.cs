@@ -9,7 +9,9 @@ internal static class SteamWorkshopUploader
     private static readonly AppId_t Sts2AppId = new(Const.Sts2SteamAppId);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
 
-    public static async Task<string> UploadAsync(WorkshopUploadPlan plan)
+    public static async Task<string> UploadAsync(
+        WorkshopUploadPlan plan,
+        IProgress<WorkshopUploadProgress>? progress = null)
     {
         if (!SteamInitializer.Initialized)
             throw new InvalidOperationException(
@@ -19,8 +21,8 @@ internal static class SteamWorkshopUploader
             throw new InvalidOperationException("Metadata-only upload requires an existing workshop item id.");
 
         var item = await ResolveWorkshopItem(plan);
-        var mainChanged = await SubmitMainUpdate(plan, item);
-        await SubmitLocalizedUpdates(plan, item);
+        var mainChanged = await SubmitMainUpdate(plan, item, progress);
+        await SubmitLocalizedUpdates(plan, item, progress);
         await SyncDependencies(plan, item);
 
         plan.State.WorkshopItemId = item.m_PublishedFileId;
@@ -60,10 +62,24 @@ internal static class SteamWorkshopUploader
             throw new InvalidOperationException($"Failed to create workshop item: {create.m_eResult}");
         Main.Logger.Info(
             $"[Audit] Created new Workshop item. ModId={plan.Mod.Id}, ItemId={create.m_nPublishedFileId.m_PublishedFileId}.");
+        PersistWorkshopItemBinding(plan, create.m_nPublishedFileId);
         return create.m_nPublishedFileId;
     }
 
-    private static async Task<string> SubmitMainUpdate(WorkshopUploadPlan plan, PublishedFileId_t item)
+    private static void PersistWorkshopItemBinding(WorkshopUploadPlan plan, PublishedFileId_t item)
+    {
+        plan.State.WorkshopItemId = item.m_PublishedFileId;
+        plan.Metadata.WorkshopItemId = item.m_PublishedFileId;
+        WorkshopJson.Write(WorkshopPaths.StateFile(plan.Mod.Path), plan.State);
+        WorkshopJson.Write(WorkshopPaths.MetadataFile(plan.Mod.Path), plan.Metadata);
+        Main.Logger.Info(
+            $"[Audit] Persisted Workshop item binding. ModId={plan.Mod.Id}, ItemId={item.m_PublishedFileId}.");
+    }
+
+    private static async Task<string> SubmitMainUpdate(
+        WorkshopUploadPlan plan,
+        PublishedFileId_t item,
+        IProgress<WorkshopUploadProgress>? progress)
     {
         var metadata = plan.Metadata;
         var handle = SteamUGC.StartItemUpdate(Sts2AppId, item);
@@ -107,7 +123,11 @@ internal static class SteamWorkshopUploader
         Main.Logger.Info(
             $"[Audit] Submitting main Workshop update. ItemId={item.m_PublishedFileId}, Touched={touched}, ChangelogOnly={changelogOnly}, ChangedKeys={FormatKeys(plan.ChangedKeys)}.");
         var call = SteamUGC.SubmitItemUpdate(handle, metadata.ChangeNote ?? "");
-        var update = await WaitForUpdate(handle, call);
+        var update = await WaitForUpdate(
+            handle,
+            call,
+            progress,
+            WorkshopUploadProgressOperation.MainUpdate);
         if (update.m_eResult != EResult.k_EResultOK)
             throw new InvalidOperationException($"Workshop update failed: {update.m_eResult}");
         Main.Logger.Info(
@@ -115,7 +135,10 @@ internal static class SteamWorkshopUploader
         return changelogOnly ? "changelog submitted" : "submitted";
     }
 
-    private static async Task SubmitLocalizedUpdates(WorkshopUploadPlan plan, PublishedFileId_t item)
+    private static async Task SubmitLocalizedUpdates(
+        WorkshopUploadPlan plan,
+        PublishedFileId_t item,
+        IProgress<WorkshopUploadProgress>? progress)
     {
         if (!plan.Metadata.Update.Localized)
             return;
@@ -130,13 +153,17 @@ internal static class SteamWorkshopUploader
                 throw new InvalidOperationException(
                     $"Localized entry '{language}' has description without title. Include title.txt to avoid Steam clearing it.");
 
-            await SubmitLocalizedUpdate(language, text, item);
+            await SubmitLocalizedUpdate(language, text, item, progress);
             Main.Logger.Info(
                 $"[Audit] Localized Workshop update completed. ItemId={item.m_PublishedFileId}, Language={language}.");
         }
     }
 
-    private static async Task SubmitLocalizedUpdate(string language, LocalizedWorkshopText text, PublishedFileId_t item)
+    private static async Task SubmitLocalizedUpdate(
+        string language,
+        LocalizedWorkshopText text,
+        PublishedFileId_t item,
+        IProgress<WorkshopUploadProgress>? progress)
     {
         for (var attempt = 1; attempt <= MaxAttempts; attempt++)
         {
@@ -150,7 +177,12 @@ internal static class SteamWorkshopUploader
                 Ensure(SteamUGC.SetItemDescription(handle, text.Description), $"localized description {language}");
 
             var call = SteamUGC.SubmitItemUpdate(handle, "");
-            var result = await WaitForUpdate(handle, call);
+            var result = await WaitForUpdate(
+                handle,
+                call,
+                progress,
+                WorkshopUploadProgressOperation.LocalizedUpdate,
+                language);
             if (result.m_eResult == EResult.k_EResultOK)
                 return;
 
@@ -245,16 +277,56 @@ internal static class SteamWorkshopUploader
 
     private static async Task<SubmitItemUpdateResult_t> WaitForUpdate(
         UGCUpdateHandle_t handle,
-        SteamAPICall_t call)
+        SteamAPICall_t call,
+        IProgress<WorkshopUploadProgress>? progress,
+        WorkshopUploadProgressOperation operation,
+        string? language = null)
     {
         using var result = new SteamCallResult<SubmitItemUpdateResult_t>(call, SteamInitializer.DisconnectToken);
         while (!result.Task.IsCompleted)
         {
-            SteamUGC.GetItemUpdateProgress(handle, out _, out _);
+            ReportUpdateProgress(handle, progress, operation, language);
             await Task.Delay(500, SteamInitializer.DisconnectToken);
         }
 
+        ReportUpdateProgress(handle, progress, operation, language);
         return await result.Task;
+    }
+
+    private static void ReportUpdateProgress(
+        UGCUpdateHandle_t handle,
+        IProgress<WorkshopUploadProgress>? progress,
+        WorkshopUploadProgressOperation operation,
+        string? language)
+    {
+        if (progress == null)
+            return;
+
+        var status = SteamUGC.GetItemUpdateProgress(handle, out var bytesProcessed, out var bytesTotal);
+        progress.Report(new WorkshopUploadProgress(
+            operation,
+            MapProgressStatus(status),
+            bytesProcessed,
+            bytesTotal,
+            language));
+    }
+
+    private static WorkshopItemUpdateProgressStatus MapProgressStatus(EItemUpdateStatus status)
+    {
+        return status switch
+        {
+            EItemUpdateStatus.k_EItemUpdateStatusPreparingConfig =>
+                WorkshopItemUpdateProgressStatus.PreparingConfig,
+            EItemUpdateStatus.k_EItemUpdateStatusPreparingContent =>
+                WorkshopItemUpdateProgressStatus.PreparingContent,
+            EItemUpdateStatus.k_EItemUpdateStatusUploadingContent =>
+                WorkshopItemUpdateProgressStatus.UploadingContent,
+            EItemUpdateStatus.k_EItemUpdateStatusUploadingPreviewFile =>
+                WorkshopItemUpdateProgressStatus.UploadingPreviewFile,
+            EItemUpdateStatus.k_EItemUpdateStatusCommittingChanges =>
+                WorkshopItemUpdateProgressStatus.CommittingChanges,
+            _ => WorkshopItemUpdateProgressStatus.Invalid
+        };
     }
 
     private static bool Ensure(bool ok, string field)

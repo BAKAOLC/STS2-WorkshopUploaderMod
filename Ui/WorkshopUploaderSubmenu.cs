@@ -35,6 +35,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private readonly Dictionary<string, bool> _updateChecks = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Button> _uploadButtons = [];
     private Label _activity = null!;
+    private WorkshopUploadMode? _activeUploadMode;
     private bool _autoOpenWorkshopAfterUpload;
     private Control _bindPopup = null!;
     private VBoxContainer _bindPopupBody = null!;
@@ -792,6 +793,11 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 
     private static string FormatBytes(long bytes)
     {
+        return FormatBytes((ulong)Math.Max(0, bytes));
+    }
+
+    private static string FormatBytes(ulong bytes)
+    {
         string[] units = ["B", "KB", "MB", "GB"];
         var value = (double)bytes;
         var unit = 0;
@@ -1233,7 +1239,9 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                     ? T("Submitting metadata to Steam Workshop...")
                     : T("Submitting content and metadata to Steam Workshop..."),
                 FormatUploadTaskDetail(plan), 58);
-            var result = await SteamWorkshopUploader.UploadAsync(plan);
+            var uploadProgress = new Progress<WorkshopUploadProgress>(UpdateSteamUploadProgress);
+            _activeUploadMode = mode;
+            var result = await SteamWorkshopUploader.UploadAsync(plan, uploadProgress);
             SetActivity(result);
             UpdateTaskOverlay(T("Upload complete."), T("Refreshing local upload records and change state."), 100);
             var itemId = ResolveCurrentWorkshopItemId();
@@ -1248,6 +1256,8 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         }
         catch (Exception ex)
         {
+            if (_selected != null && string.Equals(_selected.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
+                RebuildEditor(_selected);
             Fail(T("Upload failed"), ex);
             ShowTaskError(T("Upload failed"), ex);
             ShowErrorToast(T("Upload failed. See log for details."), T("Upload failed"));
@@ -1255,6 +1265,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         finally
         {
             SetBusy(false);
+            _activeUploadMode = null;
             UpdateUploadPermissionControls();
         }
     }
@@ -3313,6 +3324,61 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         _taskOverlayMessage.Text = string.IsNullOrWhiteSpace(detail) ? message : $"{message}\n{detail}";
         _taskOverlayProgress.Value = Math.Clamp(progress, 0, 100);
         LayoutTaskOverlay(_taskOverlayPanel.Size.X, _taskOverlayPanel.Size.Y);
+    }
+
+    private void UpdateSteamUploadProgress(WorkshopUploadProgress progress)
+    {
+        if (!_taskOverlay.Visible)
+            return;
+
+        var message = progress.Operation switch
+        {
+            WorkshopUploadProgressOperation.LocalizedUpdate when !string.IsNullOrWhiteSpace(progress.Language) =>
+                string.Format(T("Submitting localized text to Steam Workshop ({0})..."), progress.Language),
+            _ => _activeUploadMode == WorkshopUploadMode.MetadataOnly
+                ? T("Submitting metadata to Steam Workshop...")
+                : T("Submitting content and metadata to Steam Workshop...")
+        };
+        var detail = $"{T("Status")}: {FormatSteamUploadStatus(progress.Status)}\n{FormatSteamUploadBytes(progress)}";
+        UpdateTaskOverlay(message, detail, ResolveSteamUploadPercent(progress));
+    }
+
+    private double ResolveSteamUploadPercent(WorkshopUploadProgress progress)
+    {
+        if (progress.BytesTotal == 0)
+            return _taskOverlayProgress.Value;
+
+        return Math.Clamp(progress.BytesProcessed * 100d / progress.BytesTotal, 0d, 100d);
+    }
+
+    private string FormatSteamUploadBytes(WorkshopUploadProgress progress)
+    {
+        if (progress.BytesTotal > 0)
+        {
+            var percent = ResolveSteamUploadPercent(progress);
+            return string.Format(
+                T("{0} / {1} ({2:0.#}%)"),
+                FormatBytes(progress.BytesProcessed),
+                FormatBytes(progress.BytesTotal),
+                percent);
+        }
+
+        return progress.BytesProcessed > 0
+            ? string.Format(T("Uploaded: {0}"), FormatBytes(progress.BytesProcessed))
+            : T("Waiting for Steam progress data.");
+    }
+
+    private string FormatSteamUploadStatus(WorkshopItemUpdateProgressStatus status)
+    {
+        return status switch
+        {
+            WorkshopItemUpdateProgressStatus.PreparingConfig => T("Preparing update metadata"),
+            WorkshopItemUpdateProgressStatus.PreparingContent => T("Preparing content files"),
+            WorkshopItemUpdateProgressStatus.UploadingContent => T("Uploading content files"),
+            WorkshopItemUpdateProgressStatus.UploadingPreviewFile => T("Uploading preview image"),
+            WorkshopItemUpdateProgressStatus.CommittingChanges => T("Committing Steam Workshop changes"),
+            _ => T("Waiting for Steam progress data")
+        };
     }
 
     private void EndTaskOverlay()
