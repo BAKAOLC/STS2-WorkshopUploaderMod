@@ -1799,9 +1799,10 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         customRow.AddChild(_customTag);
         customRow.AddChild(CreateButton(T("Add Custom Tag"), AddCustomTag));
         _tagPopupBody.AddChild(customRow);
-        _tagOptions = MergeTagOptions(_tagOptions.Count == 0 ? WorkshopTagCatalog.PageObservedTags : _tagOptions);
-        AddTagGroup(T("Workshop tags"), _tagOptions);
+        _tagOptions = MergeTagOptions(_tagOptions);
+        AddTagGroup(T("Official tags"), WorkshopTagCatalog.PageObservedTags);
         AddTagGroup(T("Language tags"), WorkshopTagCatalog.LanguageTags);
+        AddTagGroup(T("Custom tags"), _tagOptions, T("No custom tags."));
         SetPopupFooter(_tagPopup,
             CreateButton(T("Apply"), () =>
             {
@@ -1833,9 +1834,16 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         _ = RefreshTagsFromWorkshopAsync();
     }
 
-    private void AddTagGroup(string title, IReadOnlyList<WorkshopTagOption> tags)
+    private void AddTagGroup(string title, IReadOnlyList<WorkshopTagOption> tags, string? emptyText = null)
     {
         _tagPopupBody.AddChild(CreateTitle(title, 18));
+        if (tags.Count == 0)
+        {
+            if (!string.IsNullOrWhiteSpace(emptyText))
+                _tagPopupBody.AddChild(CreateMuted(emptyText));
+            return;
+        }
+
         var grid = new GridContainer
         {
             Columns = 4,
@@ -1883,15 +1891,23 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         }
     }
 
-    private List<WorkshopTagOption> MergeTagOptions(IEnumerable<WorkshopTagOption> remoteTags)
+    private List<WorkshopTagOption> MergeTagOptions(IEnumerable<WorkshopTagOption> observedTags)
     {
         var options = new Dictionary<string, WorkshopTagOption>(StringComparer.OrdinalIgnoreCase);
-        foreach (var tag in WorkshopTagCatalog.PageObservedTags)
-            options[tag.Value] = tag;
-        foreach (var tag in remoteTags)
-            options.TryAdd(tag.Value, tag);
+        foreach (var tag in observedTags)
+        {
+            var option = WorkshopTagCatalog.OptionForObservedTag(tag);
+            if (option.Source == WorkshopTagSource.Custom)
+                options.TryAdd(option.Value, option);
+        }
+
         foreach (var tag in _tagSelection)
-            options.TryAdd(tag, WorkshopTagCatalog.OptionFor(tag));
+        {
+            var option = WorkshopTagCatalog.OptionFor(tag);
+            if (option.Source == WorkshopTagSource.Custom)
+                options.TryAdd(option.Value, option);
+        }
+
         return options.Values
             .OrderBy(TagSortKey)
             .ThenBy(tag => tag.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -1900,21 +1916,15 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 
     private static int TagSortKey(WorkshopTagOption tag)
     {
-        var index = WorkshopTagCatalog.PageObservedTags
-            .Select((option, i) => (option, i))
-            .FirstOrDefault(pair => string.Equals(pair.option.Value, tag.Value, StringComparison.OrdinalIgnoreCase))
-            .i;
-        return WorkshopTagCatalog.PageObservedTags.Any(option =>
-            string.Equals(option.Value, tag.Value, StringComparison.OrdinalIgnoreCase))
-            ? index
-            : int.MaxValue;
+        var index = WorkshopTagCatalog.PageObservedTagIndex(tag.Value);
+        return index >= 0 ? index : int.MaxValue;
     }
 
     private string FormatTagSourceStatus()
     {
         return _tagOptions.Count == 0
-            ? T("Using Workshop page tag definitions.")
-            : string.Format(T("{0} Workshop tags loaded."), _tagOptions.Count);
+            ? T("Using official tag definitions.")
+            : string.Format(T("{0} custom tags loaded."), _tagOptions.Count);
     }
 
     private string FormatTagSource(WorkshopTagSource source)

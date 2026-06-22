@@ -74,9 +74,34 @@ internal static class WorkshopTagCatalog
 
     public static WorkshopTagOption OptionFor(string value)
     {
-        return PageObservedTags.Concat(LanguageTags).FirstOrDefault(option =>
-                   string.Equals(option.Value, value, StringComparison.OrdinalIgnoreCase)) ??
+        return KnownOptionFor(value) ??
                new WorkshopTagOption(value, value, WorkshopTagSource.Custom);
+    }
+
+    public static WorkshopTagOption OptionForObservedTag(WorkshopTagOption tag)
+    {
+        return KnownOptionFor(tag.Value) ??
+               new WorkshopTagOption(
+                   tag.Value,
+                   string.IsNullOrWhiteSpace(tag.DisplayName) ? tag.Value : tag.DisplayName,
+                   WorkshopTagSource.Custom);
+    }
+
+    public static int PageObservedTagIndex(string value)
+    {
+        for (var i = 0; i < PageObservedTags.Count; i++)
+        {
+            if (string.Equals(PageObservedTags[i].Value, value, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+
+        return -1;
+    }
+
+    private static WorkshopTagOption? KnownOptionFor(string value)
+    {
+        return PageObservedTags.Concat(LanguageTags).FirstOrDefault(option =>
+            string.Equals(option.Value, value, StringComparison.OrdinalIgnoreCase));
     }
 
     public static WorkshopLanguageOption? LanguageFor(string code)
