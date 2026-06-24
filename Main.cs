@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.Loader;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Modding;
 using STS2RitsuLib;
@@ -10,6 +12,7 @@ namespace STS2WorkshopUploader;
 public static class Main
 {
     public static readonly Logger Logger = RitsuLibFramework.CreateLogger(Const.ModId);
+    private static bool _dependencyResolverRegistered;
 
     public static bool IsModActive { get; private set; }
 
@@ -21,6 +24,7 @@ public static class Main
 
         try
         {
+            RegisterDependencyResolver();
             ApplyPatches();
 
             IsModActive = true;
@@ -45,5 +49,41 @@ public static class Main
     private static void DisableMod()
     {
         IsModActive = false;
+    }
+
+    private static void RegisterDependencyResolver()
+    {
+        if (_dependencyResolverRegistered)
+            return;
+
+        var assembly = typeof(Main).Assembly;
+        var loadContext = AssemblyLoadContext.GetLoadContext(assembly);
+        if (loadContext == null)
+            return;
+
+        loadContext.Resolving += ResolveModDependency;
+        _dependencyResolverRegistered = true;
+    }
+
+    private static Assembly? ResolveModDependency(AssemblyLoadContext context, AssemblyName assemblyName)
+    {
+        var modAssemblyPath = typeof(Main).Assembly.Location;
+        var modDirectory = Path.GetDirectoryName(modAssemblyPath);
+        if (string.IsNullOrWhiteSpace(modDirectory))
+            return null;
+
+        var dependencyPath = Path.Combine(modDirectory, $"{assemblyName.Name}.dll");
+        if (!File.Exists(dependencyPath))
+            return null;
+
+        try
+        {
+            return context.LoadFromAssemblyPath(dependencyPath);
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"Failed to load dependency '{assemblyName.Name}' from '{dependencyPath}': {ex.Message}");
+            return null;
+        }
     }
 }
