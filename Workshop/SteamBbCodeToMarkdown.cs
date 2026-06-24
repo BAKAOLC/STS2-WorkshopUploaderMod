@@ -459,7 +459,9 @@ internal static class SteamBbCodeToMarkdown
     {
         return text
             .Replace("[lb]", "[", StringComparison.OrdinalIgnoreCase)
-            .Replace("[rb]", "]", StringComparison.OrdinalIgnoreCase);
+            .Replace("[rb]", "]", StringComparison.OrdinalIgnoreCase)
+            .Replace("&#91;", "[", StringComparison.Ordinal)
+            .Replace("&#93;", "]", StringComparison.Ordinal);
     }
 
     private static string NormalizeInlineWhitespace(string text)
