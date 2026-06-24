@@ -12,37 +12,10 @@ internal static class MarkdownToSteamBbCode
         .UseAdvancedExtensions()
         .Build();
 
-    private static readonly HashSet<string> KnownTags = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "b",
-        "i",
-        "u",
-        "strike",
-        "code",
-        "quote",
-        "url",
-        "img",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-        "list",
-        "olist",
-        "table",
-        "tr",
-        "th",
-        "td"
-    };
-
     public static string Convert(string markdown)
     {
         if (string.IsNullOrWhiteSpace(markdown))
             return string.Empty;
-
-        if (ContainsKnownBbCode(markdown))
-            return NormalizeLineEndings(markdown).Trim();
 
         var document = Markdown.Parse(markdown, Pipeline);
         return NormalizeLineEndings(RenderBlocks(document)).Trim();
@@ -279,64 +252,5 @@ internal static class MarkdownToSteamBbCode
     private static string NormalizeLineEndings(string text)
     {
         return text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
-    }
-
-    private static bool ContainsKnownBbCode(string text)
-    {
-        var index = 0;
-        while (index < text.Length)
-        {
-            var open = text.IndexOf('[', index);
-            if (open < 0)
-                return false;
-
-            var close = text.IndexOf(']', open + 1);
-            if (close < 0)
-                return false;
-
-            var tag = ParseTag(text[(open + 1)..close]);
-            if (tag is { IsListItem: true } || (tag is { Name: var name } &&
-                                                !name.Equals("lb", StringComparison.OrdinalIgnoreCase) &&
-                                                !name.Equals("rb", StringComparison.OrdinalIgnoreCase) &&
-                                                KnownTags.Contains(name)))
-                return true;
-
-            index = close + 1;
-        }
-
-        return false;
-    }
-
-    private static TagToken? ParseTag(string rawTag)
-    {
-        var tag = rawTag.Trim();
-        if (tag.Length == 0)
-            return null;
-
-        if (tag == "*")
-            return TagToken.ListItem();
-
-        var isClosing = tag[0] == '/';
-        if (isClosing)
-            tag = tag[1..].TrimStart();
-
-        var equals = tag.IndexOf('=');
-        var nameEnd = equals >= 0 ? equals : tag.IndexOfAny([' ', '\t']);
-        if (nameEnd < 0)
-            nameEnd = tag.Length;
-
-        var name = tag[..nameEnd].Trim().ToLowerInvariant();
-        if (name.Length == 0)
-            return null;
-
-        return new TagToken(name, isClosing, false);
-    }
-
-    private sealed record TagToken(string Name, bool IsClosing, bool IsListItem)
-    {
-        public static TagToken ListItem()
-        {
-            return new TagToken("*", false, true);
-        }
     }
 }
