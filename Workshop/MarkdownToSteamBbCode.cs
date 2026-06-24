@@ -1,175 +1,252 @@
-using System.Net;
 using System.Text;
-using System.Text.RegularExpressions;
+using Markdig;
+using Markdig.Extensions.Tables;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
 
 namespace STS2WorkshopUploader.Workshop;
 
-internal static partial class MarkdownToSteamBbCode
+internal static class MarkdownToSteamBbCode
 {
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .Build();
+
     public static string Convert(string markdown)
     {
-        if (string.IsNullOrEmpty(markdown))
-            return string.Empty;
+        var document = Markdown.Parse(markdown ?? string.Empty, Pipeline);
+        return NormalizeLineEndings(RenderBlocks(document)).Trim();
+    }
 
-        var normalized = markdown.Replace("\r\n", "\n").Replace('\r', '\n');
-        var lines = normalized.Split('\n');
-        var output = new StringBuilder(normalized.Length);
-        var inCodeBlock = false;
-        var inList = false;
+    private static string RenderBlocks(ContainerBlock container)
+    {
+        List<string> rendered = [];
 
-        foreach (var rawLine in lines)
+        foreach (var block in container)
         {
-            var line = rawLine.TrimEnd();
-            if (line.StartsWith("```", StringComparison.Ordinal))
-            {
-                if (inList)
-                {
-                    output.AppendLine("[/list]");
-                    inList = false;
-                }
-
-                output.AppendLine(inCodeBlock ? "[/code]" : "[code]");
-                inCodeBlock = !inCodeBlock;
-                continue;
-            }
-
-            if (inCodeBlock)
-            {
-                output.AppendLine(Escape(line));
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                if (inList)
-                {
-                    output.AppendLine("[/list]");
-                    inList = false;
-                }
-
-                output.AppendLine();
-                continue;
-            }
-
-            var heading = HeadingRegex().Match(line);
-            if (heading.Success)
-            {
-                if (inList)
-                {
-                    output.AppendLine("[/list]");
-                    inList = false;
-                }
-
-                output.Append("[h1]");
-                output.Append(ConvertInline(heading.Groups["text"].Value.Trim()));
-                output.AppendLine("[/h1]");
-                continue;
-            }
-
-            var listItem = ListRegex().Match(line);
-            if (listItem.Success)
-            {
-                if (!inList)
-                {
-                    output.AppendLine("[list]");
-                    inList = true;
-                }
-
-                output.Append("[*]");
-                output.AppendLine(ConvertInline(listItem.Groups["text"].Value.Trim()));
-                continue;
-            }
-
-            if (inList)
-            {
-                output.AppendLine("[/list]");
-                inList = false;
-            }
-
-            output.AppendLine(ConvertInline(line.Trim()));
+            var text = RenderBlock(block).Trim();
+            if (text.Length > 0)
+                rendered.Add(text);
         }
 
-        if (inCodeBlock)
-            output.AppendLine("[/code]");
-        if (inList)
-            output.AppendLine("[/list]");
-
-        return output.ToString().Trim();
+        return string.Join("\n\n", rendered);
     }
 
-    private static string ConvertInline(string text)
+    private static string RenderBlock(Block block)
     {
-        var escaped = ImageRegex().Replace(text, match =>
+        return block switch
         {
-            var url = Escape(match.Groups["url"].Value);
-            return $"[img]{url}[/img]";
-        });
-        escaped = LinkRegex().Replace(escaped, match =>
-        {
-            var label = Escape(match.Groups["label"].Value);
-            var url = Escape(match.Groups["url"].Value);
-            return $"[url={url}]{label}[/url]";
-        });
-        escaped = BoldRegex().Replace(escaped, match => $"[b]{Escape(match.Groups["text"].Value)}[/b]");
-        escaped = ItalicRegex().Replace(escaped, match => $"[i]{Escape(match.Groups["text"].Value)}[/i]");
-        escaped = StrikeRegex().Replace(escaped, match => $"[strike]{Escape(match.Groups["text"].Value)}[/strike]");
-        escaped = InlineCodeRegex().Replace(escaped, match => $"[code]{Escape(match.Groups["text"].Value)}[/code]");
-        escaped = EscapeUnconvertedSegments(escaped);
-        return escaped;
+            HeadingBlock heading => RenderHeading(heading),
+            ParagraphBlock paragraph => RenderInline(paragraph.Inline),
+            ListBlock list => RenderList(list),
+            QuoteBlock quote => RenderQuote(quote),
+            FencedCodeBlock code => RenderCodeBlock(code),
+            CodeBlock code => RenderCodeBlock(code),
+            ThematicBreakBlock => "----",
+            Table table => RenderTable(table),
+            HtmlBlock html => EscapeText(html.Lines.ToString()),
+            LeafBlock leaf => EscapeText(leaf.Lines.ToString()),
+            ContainerBlock container => RenderBlocks(container),
+            _ => string.Empty
+        };
     }
 
-    private static string EscapeUnconvertedSegments(string text)
+    private static string RenderHeading(HeadingBlock heading)
     {
-        var builder = new StringBuilder(text.Length);
-        var i = 0;
-        while (i < text.Length)
+        var tag = heading.Level switch
         {
-            if (text[i] == '[')
+            1 => "h1",
+            2 => "h2",
+            _ => "h3"
+        };
+
+        return $"[{tag}]{RenderInline(heading.Inline).Trim()}[/{tag}]";
+    }
+
+    private static string RenderList(ListBlock list)
+    {
+        var tag = list.IsOrdered ? "olist" : "list";
+        var builder = new StringBuilder();
+        builder.Append('[').Append(tag).AppendLine("]");
+
+        foreach (var item in list)
+        {
+            if (item is not ListItemBlock listItem)
+                continue;
+
+            var text = RenderListItem(listItem);
+            if (text.Length > 0)
+                builder.Append("[*]").AppendLine(text);
+        }
+
+        builder.Append("[/").Append(tag).Append(']');
+        return builder.ToString();
+    }
+
+    private static string RenderListItem(ListItemBlock listItem)
+    {
+        List<string> parts = [];
+
+        foreach (var child in listItem)
+        {
+            var text = RenderBlock(child).Trim();
+            if (text.Length > 0)
+                parts.Add(text);
+        }
+
+        return string.Join("\n", parts);
+    }
+
+    private static string RenderQuote(QuoteBlock quote)
+    {
+        var content = RenderBlocks(quote).Trim();
+        return content.Length == 0 ? string.Empty : $"[quote]\n{content}\n[/quote]";
+    }
+
+    private static string RenderCodeBlock(LeafBlock code)
+    {
+        return $"[code]\n{EscapeCode(code.Lines.ToString().TrimEnd())}\n[/code]";
+    }
+
+    private static string RenderTable(Table table)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("[table]");
+
+        foreach (var child in table)
+        {
+            if (child is not TableRow row)
+                continue;
+
+            builder.AppendLine("[tr]");
+            foreach (var cellBlock in row)
             {
-                var close = text.IndexOf(']', i);
-                if (close >= 0)
-                {
-                    builder.Append(text, i, close - i + 1);
-                    i = close + 1;
-                    continue;
-                }
+                var tag = row.IsHeader ? "th" : "td";
+                var content = cellBlock is TableCell cell
+                    ? RenderTableCell(cell).Trim()
+                    : RenderBlock(cellBlock).Trim();
+                builder.Append('[').Append(tag).Append(']');
+                builder.Append(content);
+                builder.Append("[/").Append(tag).AppendLine("]");
             }
 
-            builder.Append(Escape(text[i].ToString()));
-            i++;
+            builder.AppendLine("[/tr]");
+        }
+
+        builder.Append("[/table]");
+        return builder.ToString();
+    }
+
+    private static string RenderTableCell(TableCell cell)
+    {
+        List<string> parts = [];
+
+        foreach (var block in cell)
+        {
+            var text = RenderBlock(block).Trim();
+            if (text.Length > 0)
+                parts.Add(text);
+        }
+
+        return string.Join("\n", parts);
+    }
+
+    private static string RenderInline(ContainerInline? container)
+    {
+        if (container == null)
+            return string.Empty;
+
+        var builder = new StringBuilder();
+        var inline = container.FirstChild;
+
+        while (inline != null)
+        {
+            builder.Append(RenderInline(inline));
+            inline = inline.NextSibling;
         }
 
         return builder.ToString();
     }
 
-    private static string Escape(string text)
+    private static string RenderInline(Inline inline)
     {
-        return WebUtility.HtmlDecode(text)
-            .Replace("[", "[lb]", StringComparison.Ordinal)
-            .Replace("]", "[rb]", StringComparison.Ordinal);
+        return inline switch
+        {
+            LiteralInline literal => EscapeText(literal.Content.ToString()),
+            CodeInline code => $"[code]{EscapeCode(code.Content)}[/code]",
+            LineBreakInline => "\n",
+            HtmlInline html => EscapeText(html.Tag),
+            LinkInline { IsImage: true } image => RenderImage(image),
+            LinkInline link => RenderLink(link),
+            EmphasisInline emphasis => RenderEmphasis(emphasis),
+            ContainerInline nested => RenderInline(nested),
+            _ => EscapeText(inline.ToString() ?? string.Empty)
+        };
     }
 
-    [GeneratedRegex(@"^(?<marks>#{1,6})\s+(?<text>.+)$")]
-    private static partial Regex HeadingRegex();
+    private static string RenderImage(LinkInline image)
+    {
+        if (string.IsNullOrWhiteSpace(image.Url))
+            return RenderInline(image);
 
-    [GeneratedRegex(@"^\s*[-*+]\s+(?<text>.+)$")]
-    private static partial Regex ListRegex();
+        return $"[img]{EscapeUrl(image.Url)}[/img]";
+    }
 
-    [GeneratedRegex(@"!\[(?<label>[^\]]*)\]\((?<url>[^)]+)\)")]
-    private static partial Regex ImageRegex();
+    private static string RenderLink(LinkInline link)
+    {
+        var label = RenderInline(link).Trim();
+        if (string.IsNullOrWhiteSpace(link.Url))
+            return label;
 
-    [GeneratedRegex(@"\[(?<label>[^\]]+)\]\((?<url>[^)]+)\)")]
-    private static partial Regex LinkRegex();
+        return $"[url={EscapeUrl(link.Url)}]{label}[/url]";
+    }
 
-    [GeneratedRegex(@"\*\*(?<text>.+?)\*\*")]
-    private static partial Regex BoldRegex();
+    private static string RenderEmphasis(EmphasisInline emphasis)
+    {
+        var content = RenderInline(emphasis);
+        return emphasis.DelimiterChar switch
+        {
+            '*' or '_' when emphasis.DelimiterCount >= 2 => $"[b]{content}[/b]",
+            '*' or '_' => $"[i]{content}[/i]",
+            '~' => $"[strike]{content}[/strike]",
+            _ => content
+        };
+    }
 
-    [GeneratedRegex(@"(?<!\*)\*(?<text>[^*]+)\*(?!\*)")]
-    private static partial Regex ItalicRegex();
+    private static string EscapeText(string text)
+    {
+        return EscapeBrackets(text);
+    }
 
-    [GeneratedRegex(@"~~(?<text>.+?)~~")]
-    private static partial Regex StrikeRegex();
+    private static string EscapeCode(string text)
+    {
+        return EscapeBrackets(text);
+    }
 
-    [GeneratedRegex(@"`(?<text>[^`]+)`")]
-    private static partial Regex InlineCodeRegex();
+    private static string EscapeUrl(string url)
+    {
+        return url
+            .Replace("]", "%5D", StringComparison.Ordinal)
+            .Replace("\n", string.Empty, StringComparison.Ordinal)
+            .Replace("\r", string.Empty, StringComparison.Ordinal);
+    }
+
+    private static string EscapeBrackets(string text)
+    {
+        var builder = new StringBuilder(text.Length);
+        foreach (var c in text)
+            builder.Append(c switch
+            {
+                '[' => "[lb]",
+                ']' => "[rb]",
+                _ => c
+            });
+
+        return builder.ToString();
+    }
+
+    private static string NormalizeLineEndings(string text)
+    {
+        return text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+    }
 }
