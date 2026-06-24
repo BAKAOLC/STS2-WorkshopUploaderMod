@@ -14,7 +14,7 @@ internal static class MarkdownToSteamBbCode
 
     public static string Convert(string markdown)
     {
-        var document = Markdown.Parse(markdown ?? string.Empty, Pipeline);
+        var document = Markdown.Parse(markdown, Pipeline);
         return NormalizeLineEndings(RenderBlocks(document)).Trim();
     }
 

@@ -396,8 +396,8 @@ internal static class SteamBbCodeToMarkdown
 
     private static string RenderInline(BbNode node)
     {
-        if (node.Tag == "text" && node.Text != null)
-            return DecodeEscapes(node.Text);
+        if (node is { Tag: "text", Text: not null } textNode)
+            return DecodeEscapes(textNode.Text);
 
         return node.Tag switch
         {

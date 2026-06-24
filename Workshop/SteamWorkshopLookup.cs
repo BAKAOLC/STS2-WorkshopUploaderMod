@@ -162,13 +162,11 @@ internal static class SteamWorkshopLookup
                 var count = SteamUGC.GetQueryUGCNumTags(handle, itemIndex);
                 for (uint tagIndex = 0; tagIndex < count; tagIndex++)
                 {
-                    var tag = string.Empty;
-                    if (!SteamUGC.GetQueryUGCTag(handle, itemIndex, tagIndex, out tag, TagBufferSize) ||
+                    if (!SteamUGC.GetQueryUGCTag(handle, itemIndex, tagIndex, out var tag, TagBufferSize) ||
                         string.IsNullOrWhiteSpace(tag))
                         continue;
 
-                    var displayName = string.Empty;
-                    SteamUGC.GetQueryUGCTagDisplayName(handle, itemIndex, tagIndex, out displayName, TagBufferSize);
+                    SteamUGC.GetQueryUGCTagDisplayName(handle, itemIndex, tagIndex, out var displayName, TagBufferSize);
                     tags[tag] = new WorkshopTagOption(
                         tag,
                         string.IsNullOrWhiteSpace(displayName) ? tag : displayName,
@@ -240,20 +238,16 @@ internal static class SteamWorkshopLookup
         var tags = new List<string>();
         var count = SteamUGC.GetQueryUGCNumTags(handle, itemIndex);
         for (uint tagIndex = 0; tagIndex < count; tagIndex++)
-        {
-            var tag = string.Empty;
-            if (SteamUGC.GetQueryUGCTag(handle, itemIndex, tagIndex, out tag, TagBufferSize) &&
+            if (SteamUGC.GetQueryUGCTag(handle, itemIndex, tagIndex, out var tag, TagBufferSize) &&
                 !string.IsNullOrWhiteSpace(tag))
                 tags.Add(tag);
-        }
 
         return tags;
     }
 
     private static string? ReadPreviewUrl(UGCQueryHandle_t handle, uint itemIndex)
     {
-        var url = string.Empty;
-        return SteamUGC.GetQueryUGCPreviewURL(handle, itemIndex, out url, 1024) &&
+        return SteamUGC.GetQueryUGCPreviewURL(handle, itemIndex, out var url, 1024) &&
                !string.IsNullOrWhiteSpace(url)
             ? url
             : null;

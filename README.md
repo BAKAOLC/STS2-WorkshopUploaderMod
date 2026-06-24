@@ -4,7 +4,9 @@ In-game Steam Workshop uploader for local Slay the Spire 2 mod workspaces.
 
 ## Overview
 
-STS2 Workshop Uploader adds a RitsuLib settings-menu entry that opens a dedicated Workshop upload UI. It is intended for managing local loaded or unloaded mods and publishing them to Steam Workshop without using the original external uploader flow directly.
+STS2 Workshop Uploader adds a RitsuLib settings-menu entry that opens a dedicated Workshop upload UI. It is intended for
+managing local loaded or unloaded mods and publishing them to Steam Workshop without using the original external
+uploader flow directly.
 
 Core features:
 
@@ -33,7 +35,8 @@ Build the project with:
 dotnet build .\STS2-WorkshopUploader.csproj
 ```
 
-By default, the build copies this mod into the configured Slay the Spire 2 `mods` directory. The RitsuLib package also copies its runtime files when `RitsuLibDeployDir` is set.
+By default, the build copies this mod into the configured Slay the Spire 2 `mods` directory. The RitsuLib package also
+copies its runtime files when `RitsuLibDeployDir` is set.
 
 Local machine paths can be overridden with `local.props`.
 

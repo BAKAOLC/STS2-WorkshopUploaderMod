@@ -1,21 +1,20 @@
 using Godot;
-using MegaCrit.Sts2.Core.Modding;
 
 namespace STS2WorkshopUploader.Workshop;
 
 internal static class WorkshopPaths
 {
     public const string RecordDirectoryName = ".sts2-workshop-uploader";
-    public const string MetadataFileName = "workshop.workshop";
-    public const string StateFileName = "state.workshop";
-    public const string LegacyMetadataFileName = "workshop.json";
-    public const string LegacyStateFileName = "state.json";
-    public const string PreviewFileName = "preview.png";
+    private const string MetadataFileName = "workshop.workshop";
+    private const string StateFileName = "state.workshop";
+    private const string LegacyMetadataFileName = "workshop.json";
+    private const string LegacyStateFileName = "state.json";
+    private const string PreviewFileName = "preview.png";
     public const string PlaceholderPreviewResourceName = "STS2WorkshopUploader.Data.workshop_placeholder.png";
     public const string TitleFileName = "title.txt";
     public const string DescriptionMarkdownFileName = "description.md";
-    public const string ChangeNoteMarkdownFileName = "change_note.md";
-    public const string LocalizedDirectoryName = "localized";
+    private const string ChangeNoteMarkdownFileName = "change_note.md";
+    private const string LocalizedDirectoryName = "localized";
 
     public static string ResolveDefaultModsRoot()
     {
@@ -34,7 +33,7 @@ internal static class WorkshopPaths
         return Path.Combine(RecordDirectory(modPath), MetadataFileName);
     }
 
-    public static string LegacyMetadataFile(string modPath)
+    private static string LegacyMetadataFile(string modPath)
     {
         return Path.Combine(RecordDirectory(modPath), LegacyMetadataFileName);
     }
@@ -44,7 +43,7 @@ internal static class WorkshopPaths
         return Path.Combine(RecordDirectory(modPath), StateFileName);
     }
 
-    public static string LegacyStateFile(string modPath)
+    private static string LegacyStateFile(string modPath)
     {
         return Path.Combine(RecordDirectory(modPath), LegacyStateFileName);
     }
@@ -91,7 +90,7 @@ internal static class WorkshopPaths
         return Path.Combine(RecordDirectory(modPath), LocalizedDirectoryName);
     }
 
-    public static string StagingRoot()
+    private static string StagingRoot()
     {
         return ProjectSettings.GlobalizePath($"user://mod_data/{Const.ModId}/staging");
     }
@@ -105,16 +104,5 @@ internal static class WorkshopPaths
     public static string DisplayPath(string path)
     {
         return string.IsNullOrWhiteSpace(path) ? "(not set)" : path;
-    }
-
-    public static IEnumerable<string> CandidateUploadRoots()
-    {
-        var localRoot = ResolveDefaultModsRoot();
-        if (!string.IsNullOrWhiteSpace(localRoot))
-            yield return localRoot;
-
-        foreach (var mod in ModManager.Mods)
-            if (!string.IsNullOrWhiteSpace(mod.path))
-                yield return mod.path;
     }
 }

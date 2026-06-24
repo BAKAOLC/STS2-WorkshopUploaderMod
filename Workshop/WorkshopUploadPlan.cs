@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace STS2WorkshopUploader.Workshop;
 
 internal sealed class WorkshopUploadPlan
@@ -17,19 +15,5 @@ internal sealed class WorkshopUploadPlan
     public bool Changed(string key)
     {
         return ChangedKeys.Contains(key);
-    }
-
-    public string Describe()
-    {
-        var builder = new StringBuilder();
-        builder.AppendLine($"Mod: {Mod.Name} ({Mod.Id})");
-        builder.AppendLine($"Path: {Mod.Path}");
-        builder.AppendLine($"Mode: {Mode}");
-        builder.AppendLine($"Workshop ID: {Metadata.WorkshopItemId ?? State.WorkshopItemId}");
-        builder.AppendLine(
-            $"Changed fields: {(ChangedKeys.Count == 0 ? "none" : string.Join(", ", ChangedKeys.Order()))}");
-        if (!string.IsNullOrWhiteSpace(StagingPath))
-            builder.AppendLine($"Staging: {StagingPath}");
-        return builder.ToString().Trim();
     }
 }

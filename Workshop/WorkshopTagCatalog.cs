@@ -2,7 +2,7 @@ namespace STS2WorkshopUploader.Workshop;
 
 internal static class WorkshopTagCatalog
 {
-    public static IReadOnlyList<WorkshopTagOption> AppDefinedTags { get; } =
+    private static IReadOnlyList<WorkshopTagOption> AppDefinedTags { get; } =
     [
         new("Acts", "Acts", WorkshopTagSource.WorkshopPage),
         new("Ancients", "Ancients", WorkshopTagSource.WorkshopPage),
@@ -66,12 +66,6 @@ internal static class WorkshopTagCatalog
         .Select(language => new WorkshopTagOption(language.Code, language.DisplayName, WorkshopTagSource.Language))
         .ToArray();
 
-    public static IReadOnlyList<string> All { get; } = PageObservedTags.Concat(LanguageTags)
-        .Select(tag => tag.Value)
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .Order(StringComparer.OrdinalIgnoreCase)
-        .ToArray();
-
     public static WorkshopTagOption OptionFor(string value)
     {
         return KnownOptionFor(value) ??
@@ -90,10 +84,8 @@ internal static class WorkshopTagCatalog
     public static int PageObservedTagIndex(string value)
     {
         for (var i = 0; i < PageObservedTags.Count; i++)
-        {
             if (string.Equals(PageObservedTags[i].Value, value, StringComparison.OrdinalIgnoreCase))
                 return i;
-        }
 
         return -1;
     }

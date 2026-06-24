@@ -14,11 +14,6 @@ namespace STS2WorkshopUploader.Ui;
 
 internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 {
-    private static readonly HttpClient PreviewHttpClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(30)
-    };
-
     private const int PageMarginTop = 78;
     private const int PageMarginBottom = 72;
     private const int PanelMargin = 12;
@@ -29,6 +24,12 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private const int ButtonMinWidth = 220;
     private const int ButtonMinHeight = 46;
     private const double ToastDurationSeconds = 10d;
+
+    private static readonly HttpClient PreviewHttpClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(30)
+    };
+
     private readonly Dictionary<string, List<Label>> _changeBadgeLabels = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly Dictionary<ulong, WorkshopItemSummary> _dependencyTitles = [];
@@ -36,11 +37,12 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private readonly List<string> _excludePatterns = [];
     private readonly List<LocalModInfo> _mods = [];
     private readonly List<Button> _openWorkshopButtons = [];
+    private readonly Dictionary<Control, Vector2I> _popupDesiredSizes = [];
     private readonly HashSet<string> _tagSelection = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _updateChecks = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Button> _uploadButtons = [];
-    private Label _activity = null!;
     private WorkshopUploadMode? _activeUploadMode;
+    private Label _activity = null!;
     private bool _autoOpenWorkshopAfterUpload;
     private Control _bindPopup = null!;
     private VBoxContainer _bindPopupBody = null!;
@@ -75,7 +77,6 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private MarginContainer _pageFrame = null!;
     private int _permissionCheckSerial;
     private Label _permissionStatus = null!;
-    private readonly Dictionary<Control, Vector2I> _popupDesiredSizes = [];
     private TextureRect _previewImage = null!;
     private Label _previewStatus = null!;
     private bool _resizeLayoutRefreshQueued;
@@ -123,20 +124,19 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 
     public override void _Input(InputEvent @event)
     {
-        if (_taskOverlay?.Visible != true || !IsKeyboardOrGamepadInput(@event))
+        if (!_taskOverlay.Visible || !IsKeyboardOrGamepadInput(@event))
             return;
 
         if (IsCancelInput(@event))
         {
-            if (_taskOverlayClose.Visible)
-                _taskOverlay.Hide();
+            CloseTaskOverlayIfAllowed();
             ConsumeInput();
             return;
         }
 
         if (_taskOverlayClose.Visible && IsAcceptInput(@event))
         {
-            _taskOverlay.Hide();
+            CloseTaskOverlayIfAllowed();
             ConsumeInput();
             return;
         }
@@ -149,10 +149,9 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         if (!IsCancelInput(@event))
             return false;
 
-        if (_taskOverlay?.Visible == true)
+        if (_taskOverlay.Visible)
         {
-            if (_taskOverlayClose.Visible)
-                _taskOverlay.Hide();
+            CloseTaskOverlayIfAllowed();
             GetViewport().SetInputAsHandled();
             AcceptEvent();
             return true;
@@ -166,6 +165,12 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         GetViewport().SetInputAsHandled();
         AcceptEvent();
         return true;
+    }
+
+    private void CloseTaskOverlayIfAllowed()
+    {
+        if (_taskOverlayClose.Visible)
+            _taskOverlay.Hide();
     }
 
     private static bool IsKeyboardOrGamepadInput(InputEvent @event)
@@ -595,7 +600,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         _workshopId = CreateLine(metadata.WorkshopItemId?.ToString() ??
                                  WorkshopJson.Read<WorkshopUploadState>(WorkshopPaths.StateFile(mod.Path))
                                      ?.WorkshopItemId?.ToString() ?? "");
-        _workshopId.TextChanged += _text =>
+        _workshopId.TextChanged += _ =>
         {
             UpdateWorkshopPageButtons();
             MarkDraftTextDirty();
@@ -686,13 +691,13 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             T("Allow content"),
             metadata.Update.Content);
 
-        BuildDependencySection(mod, metadata);
+        BuildDependencySection(metadata);
         _ = ResolveDependencyTitlesAsync();
         BuildUploadSection();
         _ = EnsureRemoteBaselineAsync(mod);
     }
 
-    private void BuildDependencySection(LocalModInfo mod, WorkshopMetadata metadata)
+    private void BuildDependencySection(WorkshopMetadata metadata)
     {
         AddSection(T("Dependencies"), "dependencies", T("Allow dependencies"),
             metadata.Update.Dependencies);
@@ -890,11 +895,6 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         return choices.Length == 0 ? [(string.Empty, T("No more languages"))] : choices;
     }
 
-    private string GetDefaultLanguageToAdd(LocalModInfo mod)
-    {
-        return GetAddableLanguageChoices(mod).FirstOrDefault().Value ?? string.Empty;
-    }
-
     private static string FormatLanguage(string code)
     {
         var option = WorkshopTagCatalog.LanguageFor(code);
@@ -938,14 +938,17 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         var existing = GetMetadataLanguageChoices(_selected);
         foreach (var language in existing)
         {
-            var actions = string.Equals(language.Value, "english", StringComparison.OrdinalIgnoreCase)
-                ? [CreateSmallButton(T("Edit"), () => SelectLanguage(language.Value), ModSettingsButtonTone.Accent)]
-                : new[]
-                {
+            Control[] actions = string.Equals(language.Value, "english", StringComparison.OrdinalIgnoreCase)
+                ?
+                [
+                    CreateSmallButton(T("Edit"), () => SelectLanguage(language.Value), ModSettingsButtonTone.Accent)
+                ]
+                :
+                [
                     CreateSmallButton(T("Edit"), () => SelectLanguage(language.Value), ModSettingsButtonTone.Accent),
                     CreateSmallButton(T("Remove"), () => RemoveTextLanguage(language.Value),
                         ModSettingsButtonTone.Danger)
-                };
+                ];
             _languagePopupBody.AddChild(ResultRow(language.Label, actions));
         }
 
@@ -1298,7 +1301,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         searchRow.AddThemeConstantOverride("separation", 8);
         _bindSearch = CreateLine(_workshopId.Text);
         _bindSearch.PlaceholderText = T("Workshop item id or search text");
-        _bindSearch.TextSubmitted += _text => _ = SearchBindTargetsAsync();
+        _bindSearch.TextSubmitted += submitted => { _ = SearchBindTargetsAsync(); };
         searchRow.AddChild(_bindSearch);
         searchRow.AddChild(CreateButton(T("Search"), () => _ = SearchBindTargetsAsync()));
         searchRow.AddChild(CreateButton(T("Bind ID"), () =>
@@ -1557,12 +1560,12 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             return;
 
         _title.Text = item.Title;
-        File.WriteAllText(WorkshopPaths.TitleFile(_selected.Path), item.Title);
+        await File.WriteAllTextAsync(WorkshopPaths.TitleFile(_selected.Path), item.Title);
         var markdownDescription = SteamBbCodeToMarkdown.Convert(item.Description);
         if (!string.IsNullOrWhiteSpace(item.Description))
         {
             _description.Text = markdownDescription;
-            File.WriteAllText(WorkshopPaths.DescriptionMarkdownFile(_selected.Path), markdownDescription);
+            await File.WriteAllTextAsync(WorkshopPaths.DescriptionMarkdownFile(_selected.Path), markdownDescription);
         }
 
         var metadata = WorkshopMetadataEditor.LoadOrCreate(_selected);
@@ -1789,7 +1792,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 dialog.QueueFree();
             }
         };
-        dialog.Canceled += () => dialog.QueueFree();
+        dialog.Canceled += dialog.QueueFree;
         dialog.PopupCentered(new Vector2I(900, 620));
     }
 
@@ -2018,7 +2021,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         searchRow.AddThemeConstantOverride("separation", 8);
         _dependencySearch = CreateLine("");
         _dependencySearch.PlaceholderText = T("Search text or Workshop item id");
-        _dependencySearch.TextSubmitted += _text => _ = SearchDependenciesAsync();
+        _dependencySearch.TextSubmitted += submitted => { _ = SearchDependenciesAsync(); };
         searchRow.AddChild(_dependencySearch);
         searchRow.AddChild(CreateButton(T("Search"), () => _ = SearchDependenciesAsync()));
         searchRow.AddChild(CreateButton(T("Add ID"), () =>
@@ -2161,14 +2164,14 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             ""
         };
 
-        AddSection(T("Main Workshop item"), BuildMainUpdates(plan));
-        AddSection(T("Language entries"), BuildLanguageUpdates(plan));
-        AddSection(T("Separate Steam operations"), BuildSeparateUpdates(plan));
-        AddSection(T("Content Package"), BuildContentUpdates(plan));
+        AddSummarySection(T("Main Workshop item"), BuildMainUpdates(plan));
+        AddSummarySection(T("Language entries"), BuildLanguageUpdates(plan));
+        AddSummarySection(T("Separate Steam operations"), BuildSeparateUpdates(plan));
+        AddSummarySection(T("Content Package"), BuildContentUpdates(plan));
 
         return string.Join('\n', rows).Trim();
 
-        void AddSection(string title, IReadOnlyList<string> items)
+        void AddSummarySection(string title, IReadOnlyList<string> items)
         {
             rows.Add(title);
             if (items.Count == 0)
@@ -2334,14 +2337,14 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             Alignment = BoxContainer.AlignmentMode.Center
         };
         titleRow.AddThemeConstantOverride("separation", RowGap);
-        Button? collapseButton = null;
         var content = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         content.AddThemeConstantOverride("separation", RowGap);
-        collapseButton = CreateIconButton("-", () =>
+        var collapseButton = CreateIconButton("-", static () => { });
+        collapseButton.Pressed += () =>
         {
             content.Visible = !content.Visible;
-            collapseButton!.Text = content.Visible ? "-" : "+";
-        });
+            collapseButton.Text = content.Visible ? "-" : "+";
+        };
         titleRow.AddChild(collapseButton);
         titleRow.AddChild(CreateTitle(title, 21));
         if (updateKey != null)
@@ -3687,14 +3690,6 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         label.AddThemeFontSizeOverride("font_size", RitsuShellTheme.Current.Metric.FontSize.ValueLabel);
         label.AddThemeColorOverride("font_color", RitsuShellTheme.Current.Text.LabelPrimary);
         return label;
-    }
-
-    private static ModSettingsDropdownChoiceControl<string> CreateDropdown(
-        IReadOnlyList<string> options,
-        string value,
-        Action<string> onChanged)
-    {
-        return CreateDropdown(options.Select(option => (option, option)).ToArray(), value, onChanged);
     }
 
     private static ModSettingsDropdownChoiceControl<string> CreateDropdown(

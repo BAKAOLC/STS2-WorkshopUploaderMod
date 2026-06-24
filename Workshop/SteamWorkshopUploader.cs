@@ -17,7 +17,7 @@ internal static class SteamWorkshopUploader
             throw new InvalidOperationException(
                 "Steam is not initialized. Start the game through Steam and try again.");
 
-        if (plan.Mode == WorkshopUploadMode.MetadataOnly && !plan.HasWorkshopItem)
+        if (plan is { Mode: WorkshopUploadMode.MetadataOnly, HasWorkshopItem: false })
             throw new InvalidOperationException("Metadata-only upload requires an existing workshop item id.");
 
         var item = await ResolveWorkshopItem(plan);
@@ -259,14 +259,14 @@ internal static class SteamWorkshopUploader
             $"remove dependency {dependency}");
     }
 
-    private static async Task<T> RetryResult<T>(Func<Task<T>> call, Func<T, EResult> resultSelector, string label)
+    private static async Task RetryResult<T>(Func<Task<T>> call, Func<T, EResult> resultSelector, string label)
     {
         for (var attempt = 1; attempt <= MaxAttempts; attempt++)
         {
             var result = await call();
             var code = resultSelector(result);
             if (code == EResult.k_EResultOK)
-                return result;
+                return;
             if (!ShouldRetry(code) || attempt == MaxAttempts)
                 throw new InvalidOperationException($"Failed to {label}: {code}");
             await Task.Delay(RetryDelay, SteamInitializer.DisconnectToken);

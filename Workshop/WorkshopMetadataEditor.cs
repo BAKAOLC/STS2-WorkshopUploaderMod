@@ -7,25 +7,23 @@ internal static class WorkshopMetadataEditor
         return WorkshopTemplateService.EnsureTemplate(mod);
     }
 
-    public static bool AddDependency(LocalModInfo mod, ulong itemId)
+    public static void AddDependency(LocalModInfo mod, ulong itemId)
     {
         var metadata = LoadOrCreate(mod);
         if (metadata.Dependencies.Contains(itemId))
-            return false;
+            return;
 
         metadata.Dependencies.Add(itemId);
         metadata.Dependencies.Sort();
         WorkshopJson.Write(WorkshopPaths.MetadataFile(mod.Path), metadata);
-        return true;
     }
 
-    public static bool RemoveDependency(LocalModInfo mod, ulong itemId)
+    public static void RemoveDependency(LocalModInfo mod, ulong itemId)
     {
         var metadata = LoadOrCreate(mod);
         if (!metadata.Dependencies.Remove(itemId))
-            return false;
+            return;
 
         WorkshopJson.Write(WorkshopPaths.MetadataFile(mod.Path), metadata);
-        return true;
     }
 }

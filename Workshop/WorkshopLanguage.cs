@@ -21,49 +21,9 @@ internal static class WorkshopLanguage
         ["tur"] = "turkish"
     };
 
-    private static readonly HashSet<string> KnownSteamLanguages = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "english",
-        "schinese",
-        "tchinese",
-        "japanese",
-        "koreana",
-        "german",
-        "french",
-        "italian",
-        "spanish",
-        "latam",
-        "polish",
-        "brazilian",
-        "russian",
-        "thai",
-        "turkish",
-        "arabic",
-        "bulgarian",
-        "czech",
-        "danish",
-        "dutch",
-        "finnish",
-        "greek",
-        "hungarian",
-        "indonesian",
-        "malay",
-        "norwegian",
-        "portuguese",
-        "romanian",
-        "swedish",
-        "ukrainian",
-        "vietnamese"
-    };
-
     public static string Normalize(string folderName)
     {
         var key = folderName.Trim();
         return GameToSteam.TryGetValue(key, out var steamLanguage) ? steamLanguage : key.ToLowerInvariant();
-    }
-
-    public static bool IsKnownSteamLanguage(string language)
-    {
-        return KnownSteamLanguages.Contains(language);
     }
 }

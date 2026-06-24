@@ -17,7 +17,7 @@ internal static class WorkshopUploadPlanner
         if (mode == WorkshopUploadMode.Full && metadata.Update.Content)
             staging = StagingBuilder.Build(mod, metadata);
 
-        var fingerprints = BuildFingerprints(mod, metadata, mode, staging, contentFiles);
+        var fingerprints = BuildFingerprints(mod, metadata, mode, contentFiles);
         var changed = fingerprints
             .Where(pair => !state.Fingerprints.TryGetValue(pair.Key, out var old) ||
                            !string.Equals(old, pair.Value, StringComparison.Ordinal))
@@ -41,7 +41,6 @@ internal static class WorkshopUploadPlanner
         LocalModInfo mod,
         WorkshopMetadata metadata,
         WorkshopUploadMode mode,
-        string? staging,
         IReadOnlyList<ContentPackageFile> contentFiles)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
