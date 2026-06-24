@@ -188,7 +188,7 @@ internal static class SteamWorkshopUploader
 
             if (!ShouldRetry(result.m_eResult) || attempt == MaxAttempts)
                 throw new InvalidOperationException($"Localized update '{language}' failed: {result.m_eResult}");
-            await Task.Delay(RetryDelay);
+            await Task.Delay(RetryDelay, SteamInitializer.DisconnectToken);
         }
     }
 
@@ -269,7 +269,7 @@ internal static class SteamWorkshopUploader
                 return result;
             if (!ShouldRetry(code) || attempt == MaxAttempts)
                 throw new InvalidOperationException($"Failed to {label}: {code}");
-            await Task.Delay(RetryDelay);
+            await Task.Delay(RetryDelay, SteamInitializer.DisconnectToken);
         }
 
         throw new InvalidOperationException($"Failed to {label}.");

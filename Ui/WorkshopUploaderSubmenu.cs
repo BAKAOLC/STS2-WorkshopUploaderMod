@@ -14,6 +14,11 @@ namespace STS2WorkshopUploader.Ui;
 
 internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 {
+    private static readonly HttpClient PreviewHttpClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(30)
+    };
+
     private const int PageMarginTop = 78;
     private const int PageMarginBottom = 72;
     private const int PanelMargin = 12;
@@ -1680,8 +1685,9 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         if (_selected == null)
             return;
 
-        using var client = new HttpClient();
-        await using var source = await client.GetStreamAsync(url);
+        using var response = await PreviewHttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+        await using var source = await response.Content.ReadAsStreamAsync();
         var target = WorkshopPaths.PreviewFile(_selected.Path);
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         {
