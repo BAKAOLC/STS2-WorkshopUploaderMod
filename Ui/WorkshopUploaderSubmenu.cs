@@ -1388,7 +1388,11 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         return state.WorkshopItemId != itemId || state.Fingerprints.Count == 0;
     }
 
-    private async Task RefreshRemoteBaselineAsync(LocalModInfo mod, ulong itemId, bool force)
+    private async Task RefreshRemoteBaselineAsync(
+        LocalModInfo mod,
+        ulong itemId,
+        bool force,
+        Action<string, string, double>? reportProgress = null)
     {
         try
         {
@@ -1398,6 +1402,10 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 return;
 
             SetActivity(T("Refreshing remote baseline..."));
+            reportProgress?.Invoke(
+                T("Refreshing remote baseline..."),
+                string.Format(T("Querying Workshop item {0} for comparison data."), itemId),
+                82);
             Main.Logger.Info(
                 $"[Audit] Remote baseline refresh started. ModId={mod.Id}, ItemId={itemId}, Force={force}.");
             var item = (await SteamWorkshopLookup.GetItemsAsync([itemId], "english")).FirstOrDefault() ??
@@ -1408,10 +1416,22 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 return;
             }
 
+            reportProgress?.Invoke(
+                T("Refreshing remote baseline..."),
+                T("Fetching dependencies for change detection."),
+                86);
             var dependencies = await SteamWorkshopLookup.GetDependenciesAsync(itemId);
+            reportProgress?.Invoke(
+                T("Refreshing remote baseline..."),
+                T("Fetching localized Workshop text for change detection."),
+                90);
             var localized = await SteamWorkshopLookup.GetLocalizedItemAsync(
                 itemId,
                 WorkshopTagCatalog.LanguageOptions.Select(language => language.Code));
+            reportProgress?.Invoke(
+                T("Refreshing remote baseline..."),
+                T("Calculating remote fingerprints and installed content state."),
+                94);
             var localMetadata = WorkshopTemplateService.LoadEffectiveMetadata(mod);
             state.WorkshopItemId = itemId;
             state.Fingerprints = BuildRemoteBaselineFingerprints(mod, item, dependencies, localized, localMetadata);
@@ -1513,7 +1533,9 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             }
 
             UpdateTaskOverlay(T("Fetching Workshop item..."),
-                T("Requesting title, description, tags, preview, and dependencies."), 30);
+                string.Format(T("Requesting default language data for Workshop item {0}."),
+                    metadata.WorkshopItemId.Value),
+                28);
             var defaultItem = (await SteamWorkshopLookup.GetItemsAsync([metadata.WorkshopItemId.Value], "english"))
                               .FirstOrDefault() ??
                               (await SteamWorkshopLookup.GetItemsAsync([metadata.WorkshopItemId.Value]))
@@ -1528,13 +1550,14 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 return;
             }
 
-            UpdateTaskOverlay(T("Applying remote info..."),
-                T("Updating local metadata files and remote comparison baseline."), 65);
             Main.Logger.Info(
                 $"[Audit] Remote sync started. ModId={_selected.Id}, ItemId={metadata.WorkshopItemId.Value}.");
-            await ApplyRemoteInfoAsync(defaultItem);
-            var syncedLanguages = await SyncRemoteLocalizedInfoAsync(metadata.WorkshopItemId.Value, defaultItem);
-            await RefreshRemoteBaselineAsync(_selected, metadata.WorkshopItemId.Value, true);
+            await ApplyRemoteInfoAsync(defaultItem, UpdateTaskOverlay);
+            var syncedLanguages = await SyncRemoteLocalizedInfoAsync(
+                metadata.WorkshopItemId.Value,
+                defaultItem,
+                UpdateTaskOverlay);
+            await RefreshRemoteBaselineAsync(_selected, metadata.WorkshopItemId.Value, true, UpdateTaskOverlay);
             var message = string.Format(T("Synced remote info from {0} ({1})."), defaultItem.Title,
                 defaultItem.Id) + (syncedLanguages.Count == 0 ? "" : $" {string.Join(", ", syncedLanguages)}");
             SetActivity(message);
@@ -1554,11 +1577,17 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         }
     }
 
-    private async Task ApplyRemoteInfoAsync(WorkshopItemSummary item)
+    private async Task ApplyRemoteInfoAsync(
+        WorkshopItemSummary item,
+        Action<string, string, double>? reportProgress = null)
     {
         if (_selected == null)
             return;
 
+        reportProgress?.Invoke(
+            T("Applying remote info..."),
+            T("Writing title and description files."),
+            40);
         _title.Text = item.Title;
         await File.WriteAllTextAsync(WorkshopPaths.TitleFile(_selected.Path), item.Title);
         var markdownDescription = SteamBbCodeToMarkdown.Convert(item.Description);
@@ -1568,6 +1597,10 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             await File.WriteAllTextAsync(WorkshopPaths.DescriptionMarkdownFile(_selected.Path), markdownDescription);
         }
 
+        reportProgress?.Invoke(
+            T("Applying remote info..."),
+            T("Updating visibility and tag selections."),
+            48);
         var metadata = WorkshopMetadataEditor.LoadOrCreate(_selected);
         metadata.Title = item.Title;
         metadata.Description = MarkdownToSteamBbCode.Convert(markdownDescription);
@@ -1589,13 +1622,35 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         }
 
         if (!string.IsNullOrWhiteSpace(item.PreviewUrl))
+        {
+            reportProgress?.Invoke(
+                T("Applying remote info..."),
+                T("Downloading preview image."),
+                56);
             await DownloadPreviewAsync(item.PreviewUrl);
+        }
 
+        reportProgress?.Invoke(
+            T("Applying remote info..."),
+            T("Fetching Workshop dependencies."),
+            64);
         var dependencies = await SteamWorkshopLookup.GetDependenciesAsync(item.Id);
         metadata.Dependencies = dependencies.Distinct().Order().ToList();
         _dependencyTitles.Clear();
-        foreach (var dependency in await SteamWorkshopLookup.GetItemsAsync(metadata.Dependencies))
-            _dependencyTitles[dependency.Id] = dependency;
+        if (metadata.Dependencies.Count > 0)
+        {
+            reportProgress?.Invoke(
+                T("Applying remote info..."),
+                string.Format(T("Fetching titles for {0} dependency item(s)."), metadata.Dependencies.Count),
+                69);
+            foreach (var dependency in await SteamWorkshopLookup.GetItemsAsync(metadata.Dependencies))
+                _dependencyTitles[dependency.Id] = dependency;
+        }
+
+        reportProgress?.Invoke(
+            T("Applying remote info..."),
+            T("Writing synced metadata."),
+            73);
         RebuildDependencies(metadata);
         if (_dependencyPopup?.Visible == true)
             RebuildCurrentDependencyList();
@@ -1609,14 +1664,12 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         {
             BeginTaskOverlay(T("Syncing remote info"));
             UpdateTaskOverlay(T("Fetching Workshop item..."),
-                T("Requesting title, description, tags, preview, and dependencies."), 30);
+                string.Format(T("Requesting default language data for Workshop item {0}."), item.Id), 28);
             var fullItem = (await SteamWorkshopLookup.GetItemsAsync([item.Id], "english")).FirstOrDefault() ?? item;
-            UpdateTaskOverlay(T("Applying remote info..."),
-                T("Updating local metadata files and remote comparison baseline."), 65);
-            await ApplyRemoteInfoAsync(fullItem);
-            await SyncRemoteLocalizedInfoAsync(fullItem.Id, fullItem);
+            await ApplyRemoteInfoAsync(fullItem, UpdateTaskOverlay);
+            await SyncRemoteLocalizedInfoAsync(fullItem.Id, fullItem, UpdateTaskOverlay);
             if (_selected != null)
-                await RefreshRemoteBaselineAsync(_selected, fullItem.Id, true);
+                await RefreshRemoteBaselineAsync(_selected, fullItem.Id, true, UpdateTaskOverlay);
             var message = string.Format(T("Synced remote info from {0} ({1})."), fullItem.Title, fullItem.Id);
             SetActivity(message);
             UpdateTaskOverlay(T("Remote sync complete."), T("Refreshing the editor with the synced values."), 100);
@@ -1635,7 +1688,10 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         }
     }
 
-    private async Task<List<string>> SyncRemoteLocalizedInfoAsync(ulong itemId, WorkshopItemSummary defaultItem)
+    private async Task<List<string>> SyncRemoteLocalizedInfoAsync(
+        ulong itemId,
+        WorkshopItemSummary defaultItem,
+        Action<string, string, double>? reportProgress = null)
     {
         if (_selected == null)
             return [];
@@ -1646,10 +1702,21 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             .Where(language => !string.Equals(language, "english", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        reportProgress?.Invoke(
+            T("Syncing remote info"),
+            string.Format(T("Checking localized text for {0} language(s)."), languages.Length),
+            76);
         var remote = await SteamWorkshopLookup.GetLocalizedItemAsync(itemId, languages);
         var synced = new List<string>();
+        var index = 0;
         foreach (var (language, item) in remote)
         {
+            index++;
+            reportProgress?.Invoke(
+                T("Syncing remote info"),
+                string.Format(T("Processing localized text {0}/{1}: {2}."), index, remote.Count,
+                    FormatLanguage(language)),
+                76 + Math.Min(6, index * 6d / Math.Max(1, remote.Count)));
             var isCurrent = string.Equals(language, _metadataLanguage, StringComparison.OrdinalIgnoreCase);
             var hasDistinctRemoteText =
                 !string.Equals(item.Title, defaultItem.Title, StringComparison.Ordinal) ||
