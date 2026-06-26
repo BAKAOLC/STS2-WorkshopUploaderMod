@@ -616,6 +616,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             _workshopId.Text = "";
             SaveMetadata();
             UpdateWorkshopPageButtons();
+            _ = RefreshUploadPermissionAsync();
         }));
         CurrentContainer().AddChild(Row(
             CreateButton(T("Search / Bind Remote"), OpenBindPopup),
@@ -1124,6 +1125,8 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         if (_title != null && _description != null)
             SaveCurrentLanguageText();
         metadata.WorkshopItemId = ulong.TryParse(_workshopId.Text.Trim(), out var id) ? id : null;
+        if (metadata.WorkshopItemId == null)
+            WorkshopJson.Write(WorkshopPaths.StateFile(_selected.Path), new WorkshopUploadState());
         metadata.Visibility = _visibilityValue;
         metadata.Tags = _tagSelection.Order(StringComparer.OrdinalIgnoreCase).ToList();
         metadata.Exclude = _excludePatterns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
