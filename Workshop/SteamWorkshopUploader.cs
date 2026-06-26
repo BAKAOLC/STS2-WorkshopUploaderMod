@@ -21,28 +21,25 @@ internal static class SteamWorkshopUploader
             throw new InvalidOperationException("Metadata-only upload requires an existing workshop item id.");
 
         var item = await ResolveWorkshopItem(plan);
-        var mainChanged = await SubmitMainUpdate(plan, item, progress);
-        await SubmitLocalizedUpdates(plan, item, progress);
-        await SyncDependencies(plan, item);
+        var mainUpdate = await SubmitMainUpdate(plan, item, progress);
+        var uploadedFingerprintKeys = new HashSet<string>(
+            mainUpdate.SubmittedFingerprintKeys,
+            StringComparer.OrdinalIgnoreCase);
+        uploadedFingerprintKeys.UnionWith(await SubmitLocalizedUpdates(plan, item, progress));
+        if (await SyncDependencies(plan, item))
+            uploadedFingerprintKeys.Add("dependencies");
 
         plan.State.WorkshopItemId = item.m_PublishedFileId;
-        plan.State.Fingerprints = plan.Fingerprints;
-        plan.State.ContentFiles = plan.ContentFiles.ToDictionary(
-            file => file.Path,
-            file => new ContentPackageFileState
-            {
-                Hash = file.Hash,
-                Size = file.Size,
-                LastWriteUtc = file.LastWriteUtc
-            },
-            StringComparer.OrdinalIgnoreCase);
+        UpdateUploadedFingerprints(plan, uploadedFingerprintKeys);
+        if (mainUpdate.ContentSubmitted)
+            plan.State.ContentFiles = CreateContentFileState(plan.ContentFiles);
         plan.State.LastUploadedUtc = DateTimeOffset.UtcNow;
         plan.Metadata.WorkshopItemId = item.m_PublishedFileId;
         WorkshopJson.Write(WorkshopPaths.StateFile(plan.Mod.Path), plan.State);
         WorkshopJson.Write(WorkshopPaths.MetadataFile(plan.Mod.Path), plan.Metadata);
 
         var changed = plan.ChangedKeys.Count == 0 ? "no changed fields" : string.Join(", ", plan.ChangedKeys.Order());
-        return $"Uploaded item {item.m_PublishedFileId}; main update: {mainChanged}; changed: {changed}";
+        return $"Uploaded item {item.m_PublishedFileId}; main update: {mainUpdate.Summary}; changed: {changed}";
     }
 
     private static async Task<PublishedFileId_t> ResolveWorkshopItem(WorkshopUploadPlan plan)
@@ -76,39 +73,47 @@ internal static class SteamWorkshopUploader
             $"[Audit] Persisted Workshop item binding. ModId={plan.Mod.Id}, ItemId={item.m_PublishedFileId}.");
     }
 
-    private static async Task<string> SubmitMainUpdate(
+    private static async Task<MainUpdateResult> SubmitMainUpdate(
         WorkshopUploadPlan plan,
         PublishedFileId_t item,
         IProgress<WorkshopUploadProgress>? progress)
     {
         var metadata = plan.Metadata;
         var handle = SteamUGC.StartItemUpdate(Sts2AppId, item);
+        var submittedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var touched = false;
+        var contentSubmitted = false;
 
         if (metadata.Update.Title && plan.Changed("title") && metadata.Title != null)
-            touched |= Ensure(SteamUGC.SetItemTitle(handle, metadata.Title), "title");
+            Touch(SteamUGC.SetItemTitle(handle, metadata.Title), "title", "title");
 
         if (metadata.Update.Description && plan.Changed("description") && metadata.Description != null)
-            touched |= Ensure(SteamUGC.SetItemDescription(handle, metadata.Description), "description");
+            Touch(SteamUGC.SetItemDescription(handle, metadata.Description), "description", "description");
 
         if (metadata.Update.Visibility && plan.Changed("visibility") && metadata.Visibility != null)
-            touched |= Ensure(SteamUGC.SetItemVisibility(handle, ParseVisibility(metadata.Visibility)), "visibility");
+            Touch(SteamUGC.SetItemVisibility(handle, ParseVisibility(metadata.Visibility)), "visibility", "visibility");
 
         if (metadata.Update.Tags && plan.Changed("tags"))
-            touched |= Ensure(SteamUGC.SetItemTags(handle, metadata.Tags), "tags");
+            Touch(SteamUGC.SetItemTags(handle, metadata.Tags), "tags", "tags");
 
         if (metadata.Update.GameVersions && plan.Changed("gameVersions"))
-            touched |= Ensure(
+            Touch(
                 SteamUGC.SetRequiredGameVersions(handle, metadata.MinBranch ?? "", metadata.MaxBranch ?? ""),
-                "game versions");
+                "game versions",
+                "gameVersions");
 
-        if (plan.Mode == WorkshopUploadMode.Full && metadata.Update.Content && plan.Changed("content") &&
+        if (plan.Mode == WorkshopUploadMode.Full &&
+            metadata.Update.Content &&
+            (metadata.Update.ForceContent || plan.Changed("content")) &&
             plan.StagingPath != null)
-            touched |= Ensure(SteamUGC.SetItemContent(handle, plan.StagingPath), "content");
+        {
+            Touch(SteamUGC.SetItemContent(handle, plan.StagingPath), "content", "content");
+            contentSubmitted = true;
+        }
 
         var previewPath = WorkshopPaths.PreviewFile(plan.Mod.Path);
         if (metadata.Update.Preview && plan.Changed("preview") && File.Exists(previewPath))
-            touched |= Ensure(SteamUGC.SetItemPreview(handle, previewPath), "preview");
+            Touch(SteamUGC.SetItemPreview(handle, previewPath), "preview", "preview");
 
         var changelogOnly = !touched &&
                             !string.IsNullOrWhiteSpace(metadata.ChangeNote) &&
@@ -117,7 +122,7 @@ internal static class SteamWorkshopUploader
         {
             Main.Logger.Info(
                 $"[Audit] Main Workshop update skipped. ItemId={item.m_PublishedFileId}, ChangedKeys={FormatKeys(plan.ChangedKeys)}.");
-            return "skipped";
+            return new MainUpdateResult("skipped", false, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
         }
 
         Main.Logger.Info(
@@ -132,16 +137,27 @@ internal static class SteamWorkshopUploader
             throw new InvalidOperationException($"Workshop update failed: {update.m_eResult}");
         Main.Logger.Info(
             $"[Audit] Main Workshop update completed. ItemId={item.m_PublishedFileId}, Result={update.m_eResult}.");
-        return changelogOnly ? "changelog submitted" : "submitted";
+        return new MainUpdateResult(
+            changelogOnly ? "changelog submitted" : "submitted",
+            contentSubmitted,
+            submittedKeys);
+
+        void Touch(bool ok, string field, string key)
+        {
+            Ensure(ok, field);
+            touched = true;
+            submittedKeys.Add(key);
+        }
     }
 
-    private static async Task SubmitLocalizedUpdates(
+    private static async Task<HashSet<string>> SubmitLocalizedUpdates(
         WorkshopUploadPlan plan,
         PublishedFileId_t item,
         IProgress<WorkshopUploadProgress>? progress)
     {
+        var submittedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (!plan.Metadata.Update.Localized)
-            return;
+            return submittedKeys;
 
         foreach (var (language, text) in plan.Metadata.Localized)
         {
@@ -154,9 +170,15 @@ internal static class SteamWorkshopUploader
                     $"Localized entry '{language}' has description without title. Include title.txt to avoid Steam clearing it.");
 
             await SubmitLocalizedUpdate(language, text, item, progress);
+            if (text.Title != null)
+                submittedKeys.Add($"localized:{language}:title");
+            if (text.Description != null)
+                submittedKeys.Add($"localized:{language}:description");
             Main.Logger.Info(
                 $"[Audit] Localized Workshop update completed. ItemId={item.m_PublishedFileId}, Language={language}.");
         }
+
+        return submittedKeys;
     }
 
     private static async Task SubmitLocalizedUpdate(
@@ -192,10 +214,10 @@ internal static class SteamWorkshopUploader
         }
     }
 
-    private static async Task SyncDependencies(WorkshopUploadPlan plan, PublishedFileId_t item)
+    private static async Task<bool> SyncDependencies(WorkshopUploadPlan plan, PublishedFileId_t item)
     {
         if (!plan.Metadata.Update.Dependencies || !plan.Changed("dependencies"))
-            return;
+            return false;
 
         var existing = await GetDependencies(item);
         foreach (var dependency in plan.Metadata.Dependencies.Except(existing).ToArray())
@@ -211,6 +233,32 @@ internal static class SteamWorkshopUploader
                 $"[Audit] Removing Workshop dependency. ItemId={item.m_PublishedFileId}, DependencyId={dependency}.");
             await RemoveDependency(item, dependency);
         }
+
+        return true;
+    }
+
+    private static void UpdateUploadedFingerprints(WorkshopUploadPlan plan, IEnumerable<string> uploadedKeys)
+    {
+        var fingerprints = new Dictionary<string, string>(plan.State.Fingerprints, StringComparer.OrdinalIgnoreCase);
+        foreach (var key in uploadedKeys)
+            if (plan.Fingerprints.TryGetValue(key, out var fingerprint))
+                fingerprints[key] = fingerprint;
+
+        plan.State.Fingerprints = fingerprints;
+    }
+
+    private static Dictionary<string, ContentPackageFileState> CreateContentFileState(
+        IEnumerable<ContentPackageFile> files)
+    {
+        return files.ToDictionary(
+            file => file.Path,
+            file => new ContentPackageFileState
+            {
+                Hash = file.Hash,
+                Size = file.Size,
+                LastWriteUtc = file.LastWriteUtc
+            },
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private static async Task<List<ulong>> GetDependencies(PublishedFileId_t item)
@@ -369,4 +417,9 @@ internal static class SteamWorkshopUploader
             .ToArray();
         return values.Length == 0 ? "<none>" : string.Join(",", values);
     }
+
+    private sealed record MainUpdateResult(
+        string Summary,
+        bool ContentSubmitted,
+        IReadOnlySet<string> SubmittedFingerprintKeys);
 }

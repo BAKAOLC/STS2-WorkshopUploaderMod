@@ -65,6 +65,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private Control _excludePopup = null!;
     private VBoxContainer _excludePopupBody = null!;
     private GridContainer _excludeRows = null!;
+    private bool _forceContentUpload;
     private Control _languagePopup = null!;
     private VBoxContainer _languagePopupBody = null!;
     private string _languageToAdd = "schinese";
@@ -690,6 +691,14 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 OpenExcludePopup), "content",
             T("Allow content"),
             metadata.Update.Content);
+        _forceContentUpload = metadata.Update.ForceContent;
+        AddRow(T("Always upload content files"),
+            RightAligned(new ModSettingsToggleControl(_forceContentUpload,
+                value =>
+                {
+                    _forceContentUpload = value;
+                    SaveDraftMetadata();
+                })));
 
         BuildDependencySection(metadata);
         _ = ResolveDependencyTitlesAsync();
@@ -1129,6 +1138,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         metadata.Update.GameVersions = IsChecked("gameVersions");
         metadata.Update.Preview = IsChecked("preview");
         metadata.Update.Content = IsChecked("content");
+        metadata.Update.ForceContent = _forceContentUpload;
         metadata.Update.Localized = IsChecked("title") || IsChecked("description");
         WorkshopJson.Write(WorkshopPaths.MetadataFile(_selected.Path), metadata);
         if (_changeNote != null)
@@ -2333,7 +2343,12 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             return [];
 
         var rows = new List<string>();
-        if (plan.Metadata.Update.Content && plan.Changed("content"))
+        if (!plan.Metadata.Update.Content)
+            return rows;
+
+        if (plan.Metadata.Update.ForceContent)
+            rows.Add(T("Content files (forced)"));
+        else if (plan.Changed("content"))
             rows.Add(T("Content files"));
         return rows;
     }

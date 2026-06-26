@@ -59,5 +59,7 @@ internal sealed class WorkshopUpdateSelection
 
     [JsonPropertyName("content")] public bool Content { get; set; } = true;
 
+    [JsonPropertyName("forceContent")] public bool ForceContent { get; set; }
+
     [JsonPropertyName("localized")] public bool Localized { get; set; } = true;
 }

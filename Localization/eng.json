@@ -61,6 +61,7 @@
   "No exclude patterns.": "No exclude patterns.",
   "{0} exclude patterns.": "{0} exclude patterns.",
   "Allow content": "Allow content",
+  "Always upload content files": "Always upload content files",
   "Files to upload": "Files to upload",
   "No files will be uploaded.": "No files will be uploaded.",
   "{0} files, {1}": "{0} files, {1}",
@@ -209,6 +210,7 @@
   "No queued changes.": "No queued changes.",
   "Description": "Description",
   "Content files": "Content files",
+  "Content files (forced)": "Content files (forced)",
   "Will update": "Will update",
   "Skipped": "Skipped"
 }
