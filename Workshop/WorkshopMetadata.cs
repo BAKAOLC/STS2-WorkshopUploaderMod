@@ -18,6 +18,9 @@ internal sealed class WorkshopMetadata
 
     [JsonPropertyName("dependencies")] public List<ulong> Dependencies { get; set; } = [];
 
+    [JsonPropertyName("additionalPreviewImages")]
+    public List<string> AdditionalPreviewImages { get; set; } = [];
+
     [JsonPropertyName("minBranch")] public string? MinBranch { get; set; }
 
     [JsonPropertyName("maxBranch")] public string? MaxBranch { get; set; }
@@ -56,6 +59,8 @@ internal sealed class WorkshopUpdateSelection
     [JsonPropertyName("gameVersions")] public bool GameVersions { get; set; } = true;
 
     [JsonPropertyName("preview")] public bool Preview { get; set; } = true;
+
+    [JsonPropertyName("additionalPreviews")] public bool AdditionalPreviews { get; set; } = true;
 
     [JsonPropertyName("content")] public bool Content { get; set; } = true;
 

@@ -80,6 +80,75 @@ internal static class SteamWorkshopLookup
         }
     }
 
+    public static async Task<List<WorkshopAdditionalPreview>> GetAdditionalPreviewsAsync(ulong itemId)
+    {
+        if (itemId == 0)
+            return [];
+
+        EnsureSteam();
+        var publishedFileId = new PublishedFileId_t(itemId);
+        var handle = SteamUGC.CreateQueryUGCDetailsRequest([publishedFileId], 1);
+        try
+        {
+            SteamUGC.SetReturnAdditionalPreviews(handle, true);
+            using var result = new SteamCallResult<SteamUGCQueryCompleted_t>(
+                SteamUGC.SendQueryUGCRequest(handle), SteamInitializer.DisconnectToken);
+            var completed = await result.Task;
+            if (completed.m_eResult != EResult.k_EResultOK ||
+                !SteamUGC.GetQueryUGCResult(handle, 0, out var details) ||
+                details.m_eResult != EResult.k_EResultOK)
+                return [];
+
+            var count = SteamUGC.GetQueryUGCNumAdditionalPreviews(handle, 0);
+            var previews = new List<WorkshopAdditionalPreview>((int)count);
+            for (uint index = 0; index < count; index++)
+            {
+                if (!SteamUGC.GetQueryUGCAdditionalPreview(
+                        handle,
+                        0,
+                        index,
+                        out var url,
+                        1024,
+                        out var originalFileName,
+                        260,
+                        out var previewType))
+                    continue;
+
+                previews.Add(new WorkshopAdditionalPreview(
+                    (int)index,
+                    url,
+                    originalFileName,
+                    previewType));
+            }
+
+            return previews;
+        }
+        finally
+        {
+            SteamUGC.ReleaseQueryUGCRequest(handle);
+        }
+    }
+
+    public static async Task<WorkshopLegalAgreementStatus> GetWorkshopLegalAgreementStatusAsync()
+    {
+        EnsureSteam();
+        using var result = new SteamCallResult<WorkshopEULAStatus_t>(
+            SteamUGC.GetWorkshopEULAStatus(), SteamInitializer.DisconnectToken);
+        var status = await result.Task;
+        if (status.m_eResult == EResult.k_EResultInvalidParam)
+            return new WorkshopLegalAgreementStatus(false, false, true);
+
+        if (status.m_eResult != EResult.k_EResultOK)
+            throw new InvalidOperationException($"Steam Workshop legal agreement check failed: {status.m_eResult}");
+        return new WorkshopLegalAgreementStatus(status.m_bAccepted, status.m_bNeedsAction);
+    }
+
+    public static bool ShowWorkshopLegalAgreement()
+    {
+        EnsureSteam();
+        return SteamUGC.ShowWorkshopEULA();
+    }
+
     public static string? TryGetInstalledContentPath(ulong itemId)
     {
         if (itemId == 0 || !SteamInitializer.Initialized)

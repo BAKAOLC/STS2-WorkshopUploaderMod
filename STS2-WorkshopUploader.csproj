@@ -9,7 +9,7 @@
         <Nullable>enable</Nullable>
         <EnableDynamicLoading>true</EnableDynamicLoading>
         <Authors>OLC</Authors>
-        <Description>In-game Steam Workshop uploader for local Slay the Spire 2 mod workspaces.</Description>
+        <Description>In-game Steam Workshop manager and uploader for local Slay the Spire 2 mod workspaces.</Description>
         <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
         <PackageProjectUrl>https://github.com/BAKAOLC/STS2-WorkshopUploaderMod</PackageProjectUrl>
         <RepositoryUrl>https://github.com/BAKAOLC/STS2-WorkshopUploaderMod</RepositoryUrl>

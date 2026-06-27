@@ -52,7 +52,8 @@ internal static class WorkshopUploadPlanner
                 string.Join('\n', metadata.Tags.Order(StringComparer.OrdinalIgnoreCase))),
             ["dependencies"] = WorkshopFingerprint.Text(string.Join('\n', metadata.Dependencies.Order())),
             ["gameVersions"] = WorkshopFingerprint.Text($"{metadata.MinBranch}\n{metadata.MaxBranch}"),
-            ["preview"] = WorkshopFingerprint.File(WorkshopPaths.PreviewFile(mod.Path))
+            ["preview"] = WorkshopFingerprint.File(WorkshopPaths.PreviewFile(mod.Path)),
+            ["additionalPreviews"] = BuildAdditionalPreviewFingerprint(mod, metadata)
         };
 
         if (mode == WorkshopUploadMode.Full)
@@ -65,5 +66,17 @@ internal static class WorkshopUploadPlanner
         }
 
         return result;
+    }
+
+    public static string BuildAdditionalPreviewFingerprint(LocalModInfo mod, WorkshopMetadata metadata)
+    {
+        var parts = new List<string>();
+        foreach (var fileName in metadata.AdditionalPreviewImages)
+        {
+            var normalized = WorkshopPaths.NormalizeAdditionalPreviewFileName(fileName);
+            parts.Add($"{normalized}:{WorkshopFingerprint.File(WorkshopPaths.AdditionalPreviewFile(mod.Path, normalized))}");
+        }
+
+        return WorkshopFingerprint.Text(string.Join('\n', parts));
     }
 }

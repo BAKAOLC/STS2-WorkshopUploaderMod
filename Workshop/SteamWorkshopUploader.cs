@@ -60,6 +60,9 @@ internal static class SteamWorkshopUploader
         Main.Logger.Info(
             $"[Audit] Created new Workshop item. ModId={plan.Mod.Id}, ItemId={create.m_nPublishedFileId.m_PublishedFileId}.");
         PersistWorkshopItemBinding(plan, create.m_nPublishedFileId);
+        if (create.m_bUserNeedsToAcceptWorkshopLegalAgreement)
+            throw new WorkshopLegalAgreementException(
+                "Steam requires the user to accept the Workshop legal agreement before uploading.");
         return create.m_nPublishedFileId;
     }
 
@@ -115,6 +118,12 @@ internal static class SteamWorkshopUploader
         if (metadata.Update.Preview && plan.Changed("preview") && File.Exists(previewPath))
             Touch(SteamUGC.SetItemPreview(handle, previewPath), "preview", "preview");
 
+        if (metadata.Update.AdditionalPreviews && plan.Changed("additionalPreviews"))
+        {
+            await SyncAdditionalPreviews(handle, plan, item);
+            Touch(true, "additional previews", "additionalPreviews");
+        }
+
         var changelogOnly = !touched &&
                             !string.IsNullOrWhiteSpace(metadata.ChangeNote) &&
                             plan.ChangedKeys.Count > 0;
@@ -135,6 +144,9 @@ internal static class SteamWorkshopUploader
             WorkshopUploadProgressOperation.MainUpdate);
         if (update.m_eResult != EResult.k_EResultOK)
             throw new InvalidOperationException($"Workshop update failed: {update.m_eResult}");
+        if (update.m_bUserNeedsToAcceptWorkshopLegalAgreement)
+            throw new WorkshopLegalAgreementException(
+                "Steam requires the user to accept the Workshop legal agreement before this update can be published.");
         Main.Logger.Info(
             $"[Audit] Main Workshop update completed. ItemId={item.m_PublishedFileId}, Result={update.m_eResult}.");
         return new MainUpdateResult(
@@ -147,6 +159,31 @@ internal static class SteamWorkshopUploader
             Ensure(ok, field);
             touched = true;
             submittedKeys.Add(key);
+        }
+    }
+
+    private static async Task SyncAdditionalPreviews(
+        UGCUpdateHandle_t handle,
+        WorkshopUploadPlan plan,
+        PublishedFileId_t item)
+    {
+        var existing = await SteamWorkshopLookup.GetAdditionalPreviewsAsync(item.m_PublishedFileId);
+        var files = plan.Metadata.AdditionalPreviewImages
+            .Select(WorkshopPaths.NormalizeAdditionalPreviewFileName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(fileName => WorkshopPaths.AdditionalPreviewFile(plan.Mod.Path, fileName))
+            .Where(File.Exists)
+            .ToArray();
+
+        for (var index = existing.Count - 1; index >= files.Length; index--)
+            Ensure(SteamUGC.RemoveItemPreview(handle, (uint)index), $"remove additional preview {index + 1}");
+
+        for (var index = 0; index < files.Length; index++)
+        {
+            var ok = index < existing.Count
+                ? SteamUGC.UpdateItemPreviewFile(handle, (uint)index, files[index])
+                : SteamUGC.AddItemPreviewFile(handle, files[index], EItemPreviewType.k_EItemPreviewType_Image);
+            Ensure(ok, $"additional preview {index + 1}");
         }
     }
 

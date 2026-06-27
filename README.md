@@ -1,6 +1,6 @@
 # STS2 Workshop Uploader
 
-In-game Steam Workshop uploader for local Slay the Spire 2 mod workspaces.
+In-game Steam Workshop manager and uploader for local Slay the Spire 2 mod workspaces.
 
 ## Overview
 
@@ -14,10 +14,11 @@ Core features:
 - Bind or unbind a local mod to a Steam Workshop item.
 - Create uploads for new Workshop items.
 - Upload metadata only, or upload content and metadata together.
-- Edit title, description, tags, visibility, dependencies, preview image, game version requirements, and changelog.
+- Edit title, description, tags, visibility, dependencies, main and additional preview images, game version requirements, and changelog.
 - Manage localized title and description files.
 - Convert Markdown descriptions and changelogs to Steam BBCode.
 - Compare local metadata and package file state against the stored upload baseline.
+- Check Steam Workshop legal agreement status before uploading.
 
 ## Requirements
 

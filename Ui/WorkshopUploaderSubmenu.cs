@@ -24,6 +24,8 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private const int ButtonMinWidth = 220;
     private const int ButtonMinHeight = 46;
     private const double ToastDurationSeconds = 10d;
+    private const string WorkshopLegalAgreementUrl =
+        "https://steamcommunity.com/sharedfiles/workshoplegalagreement";
 
     private static readonly HttpClient PreviewHttpClient = new()
     {
@@ -41,6 +43,10 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private readonly HashSet<string> _tagSelection = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _updateChecks = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Button> _uploadButtons = [];
+    private Control _additionalPreviewPopup = null!;
+    private VBoxContainer _additionalPreviewPopupBody = null!;
+    private VBoxContainer _additionalPreviewRows = null!;
+    private Label _additionalPreviewSummary = null!;
     private WorkshopUploadMode? _activeUploadMode;
     private Label _activity = null!;
     private bool _autoOpenWorkshopAfterUpload;
@@ -275,6 +281,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         BuildDependencyPopup();
         BuildTagPopup();
         BuildExcludePopup();
+        BuildAdditionalPreviewPopup();
         BuildTaskOverlay();
         ApplyResponsiveShellLayout();
     }
@@ -414,6 +421,13 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         _excludePopup = CreatePopup("ExcludePopup");
         _excludePopupBody = CreatePopupBody(_excludePopup);
         AddChild(_excludePopup);
+    }
+
+    private void BuildAdditionalPreviewPopup()
+    {
+        _additionalPreviewPopup = CreatePopup("AdditionalPreviewPopup");
+        _additionalPreviewPopupBody = CreatePopupBody(_additionalPreviewPopup);
+        AddChild(_additionalPreviewPopup);
     }
 
     private void BuildTaskOverlay()
@@ -638,15 +652,13 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         });
         AddRow(T("Text language"), Row(FlexibleField(_metadataLanguageSelect, 320f),
                 CreateButton(T("Manage Languages"), OpenLanguagePopup)), updateKey: "localized",
-            updateLabel: T("Allow"), updateValue: metadata.Update.Localized);
+            updateValue: metadata.Update.Localized);
         _title = CreateLine(ReadText(WorkshopPaths.TitleFile(mod.Path), metadata.Title ?? mod.Name));
         TrackDraftChanges(_title, "title");
-        AddRow(T("Title"), _title, updateKey: "title", updateLabel: T("Allow"),
-            updateValue: metadata.Update.Title);
+        AddRow(T("Title"), _title, updateKey: "title", updateValue: metadata.Update.Title);
         _description = CreateText(ReadText(WorkshopPaths.DescriptionMarkdownFile(mod.Path), ""));
         TrackDraftChanges(_description, "description");
         AddTextEditorRow(T("Summary / Description (Markdown)"), _description, updateKey: "description",
-            updateLabel: T("Allow"),
             updateValue: metadata.Update.Description);
         _visibilityValue = metadata.Visibility ?? "private";
         _visibility = CreateDropdown(
@@ -663,26 +675,30 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 SaveDraftAndRefreshChangedSlots("visibility");
             });
         AddRow(T("Visibility"), RightAligned(FlexibleField(_visibility, 260f)),
-            updateKey: "visibility", updateLabel: T("Allow"), updateValue: metadata.Update.Visibility);
+            updateKey: "visibility", updateValue: metadata.Update.Visibility);
 
         _tagSelection.Clear();
         foreach (var tag in metadata.Tags)
             _tagSelection.Add(tag);
         _tagSummary = CreateMuted(FormatTags());
         AddRow(T("Tags"), _tagSummary, CreateButton(T("Manage Tags"), OpenTagPopup), "tags",
-            T("Allow"), metadata.Update.Tags);
+            metadata.Update.Tags);
         _minBranch = CreateLine(metadata.MinBranch ?? "");
         _maxBranch = CreateLine(metadata.MaxBranch ?? "");
         TrackDraftChanges(_minBranch, "gameVersions");
         TrackDraftChanges(_maxBranch, "gameVersions");
         AddRow(T("Required game versions"), Row(_minBranch, _maxBranch), updateKey: "gameVersions",
-            updateLabel: T("Allow"),
             updateValue: metadata.Update.GameVersions);
         _previewStatus = CreateMuted(WorkshopPaths.PreviewFile(mod.Path));
         _previewImage = CreatePreviewImage(mod);
         AddRow(T("Preview image"),
             Row(FixedSize(_previewImage, 260f, 146f), _previewStatus, CreateButton(T("Import Preview"), ImportPreview)),
-            updateKey: "preview", updateLabel: T("Allow"), updateValue: metadata.Update.Preview);
+            updateKey: "preview", updateValue: metadata.Update.Preview);
+        _additionalPreviewSummary = CreateMuted(FormatAdditionalPreviews(metadata));
+        AddRow(T("Additional preview images"), _additionalPreviewSummary,
+            CreateButton(T("Manage Additional Previews"), OpenAdditionalPreviewPopup),
+            "additionalPreviews",
+            metadata.Update.AdditionalPreviews);
 
         AddSection(T("Content Package"));
         _excludePatterns.Clear();
@@ -690,7 +706,6 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         CurrentContainer().AddChild(CreateContentPackageTree(mod, metadata));
         AddRow(T("Content exclude patterns"), CreateMuted(FormatExcludes()), CreateButton(T("Manage Excludes"),
                 OpenExcludePopup), "content",
-            T("Allow content"),
             metadata.Update.Content);
         _forceContentUpload = metadata.Update.ForceContent;
         AddRow(T("Always upload content files"),
@@ -709,8 +724,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 
     private void BuildDependencySection(WorkshopMetadata metadata)
     {
-        AddSection(T("Dependencies"), "dependencies", T("Allow dependencies"),
-            metadata.Update.Dependencies);
+        AddSection(T("Dependencies"), "dependencies", metadata.Update.Dependencies);
         _dependencySummary = CreateMuted(FormatDependencies(metadata));
         CurrentContainer().AddChild(CreateDependencySummaryRow());
     }
@@ -794,6 +808,17 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         var names = metadata.Dependencies
             .Select(id => _dependencyTitles.TryGetValue(id, out var item) ? item.Title : id.ToString());
         return string.Join(", ", names);
+    }
+
+    private string FormatAdditionalPreviews(WorkshopMetadata metadata)
+    {
+        var count = metadata.AdditionalPreviewImages
+            .Select(WorkshopPaths.NormalizeAdditionalPreviewFileName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        return count == 0
+            ? T("No additional preview images.")
+            : string.Format(T("{0} additional preview image(s)."), count);
     }
 
     private string FormatTags()
@@ -1140,6 +1165,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         metadata.Update.Dependencies = IsChecked("dependencies");
         metadata.Update.GameVersions = IsChecked("gameVersions");
         metadata.Update.Preview = IsChecked("preview");
+        metadata.Update.AdditionalPreviews = IsChecked("additionalPreviews");
         metadata.Update.Content = IsChecked("content");
         metadata.Update.ForceContent = _forceContentUpload;
         metadata.Update.Localized = IsChecked("title") || IsChecked("description");
@@ -1194,6 +1220,9 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 
     private async Task<bool> EnsureCanUploadAsync()
     {
+        if (!await EnsureWorkshopLegalAgreementAcceptedAsync())
+            return false;
+
         var itemId = ResolveCurrentWorkshopItemId();
         if (itemId is null or 0)
             return true;
@@ -1221,6 +1250,91 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             ShowErrorToast(T("Upload failed. See log for details."), T("Upload failed"));
             return false;
         }
+    }
+
+    private async Task<bool> EnsureWorkshopLegalAgreementAcceptedAsync()
+    {
+        try
+        {
+            var status = await SteamWorkshopLookup.GetWorkshopLegalAgreementStatusAsync();
+            if (status.CheckUnavailable)
+            {
+                _permissionStatus.Text =
+                    T("Steam Workshop legal agreement status could not be checked. Continuing; Steam will report if acceptance is required.");
+                UpdateUploadPermissionControls();
+                Main.Logger.Warn("[Audit] Workshop legal agreement precheck is unavailable; continuing upload.");
+                return true;
+            }
+
+            if (status is { Accepted: true, NeedsAction: false })
+                return true;
+
+            var opened = TryShowWorkshopLegalAgreement();
+            _canUploadBoundItem = true;
+            _permissionStatus.Text =
+                T("Steam Workshop legal agreement must be accepted before uploading. Reopen this screen after accepting it.");
+            UpdateUploadPermissionControls();
+            ShowErrorToast(FormatWorkshopLegalAgreementOpenResult(opened), T("Upload blocked"));
+            return false;
+        }
+        catch (Exception ex)
+        {
+            var opened = TryShowWorkshopLegalAgreement();
+            _permissionStatus.Text = opened != WorkshopLegalAgreementOpenResult.Failed
+                ? FormatWorkshopLegalAgreementOpenResult(opened)
+                : string.Format(T("Workshop legal agreement check failed: {0}"), ex.Message);
+            UpdateUploadPermissionControls();
+            Main.Logger.Error($"[Audit] Workshop legal agreement check failed. Error={ex}");
+            ShowErrorToast(
+                opened != WorkshopLegalAgreementOpenResult.Failed
+                    ? FormatWorkshopLegalAgreementOpenResult(opened)
+                    : T("Upload failed. See log for details."),
+                opened != WorkshopLegalAgreementOpenResult.Failed ? T("Upload blocked") : T("Upload failed"));
+            return false;
+        }
+    }
+
+    private static WorkshopLegalAgreementOpenResult TryShowWorkshopLegalAgreement()
+    {
+        try
+        {
+            var error = OS.ShellOpen(WorkshopLegalAgreementUrl);
+            if (error == Error.Ok)
+                return WorkshopLegalAgreementOpenResult.ExternalBrowser;
+
+            Main.Logger.Warn($"[Audit] Failed to open Workshop legal agreement in browser. Error={error}.");
+        }
+        catch (Exception ex)
+        {
+            Main.Logger.Warn($"[Audit] Failed to open Workshop legal agreement in browser. Error={ex}");
+        }
+
+        try
+        {
+            if (SteamWorkshopLookup.ShowWorkshopLegalAgreement())
+                return WorkshopLegalAgreementOpenResult.SteamOverlay;
+        }
+        catch (Exception ex)
+        {
+            Main.Logger.Error($"[Audit] Failed to open Workshop legal agreement in Steam Overlay. Error={ex}");
+        }
+
+        return WorkshopLegalAgreementOpenResult.Failed;
+    }
+
+    private string FormatWorkshopLegalAgreementOpenResult(
+        WorkshopLegalAgreementOpenResult result,
+        bool again = false)
+    {
+        return result switch
+        {
+            WorkshopLegalAgreementOpenResult.SteamOverlay => again
+                ? T("Steam opened the Workshop legal agreement. Accept it before uploading again.")
+                : T("Steam opened the Workshop legal agreement. Accept it before uploading."),
+            WorkshopLegalAgreementOpenResult.ExternalBrowser =>
+                T("Opened the Workshop legal agreement in your browser. Accept it with the same Steam account before uploading."),
+            _ => T("Could not open the Workshop legal agreement in your browser or the Steam Overlay. Open the agreement page manually and accept it with the same Steam account.")
+        };
     }
 
     private void UpdateUploadPermissionControls()
@@ -1274,6 +1388,15 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 OpenWorkshopPage(itemId);
             if (_selected != null && string.Equals(_selected.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
                 RebuildEditor(_selected);
+        }
+        catch (WorkshopLegalAgreementException ex)
+        {
+            if (_selected != null && string.Equals(_selected.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
+                RebuildEditor(_selected);
+            Fail(T("Upload blocked"), ex);
+            var opened = TryShowWorkshopLegalAgreement();
+            ShowTaskError(T("Upload blocked"), ex);
+            ShowErrorToast(FormatWorkshopLegalAgreementOpenResult(opened, true), T("Upload blocked"));
         }
         catch (Exception ex)
         {
@@ -1493,7 +1616,8 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             ["tags"] = WorkshopFingerprint.Text(string.Join('\n', item.Tags.Order(StringComparer.OrdinalIgnoreCase))),
             ["dependencies"] = WorkshopFingerprint.Text(string.Join('\n', dependencies.Order())),
             ["gameVersions"] = WorkshopFingerprint.Text($"{localMetadata.MinBranch}\n{localMetadata.MaxBranch}"),
-            ["preview"] = WorkshopFingerprint.File(WorkshopPaths.PreviewFile(mod.Path))
+            ["preview"] = WorkshopFingerprint.File(WorkshopPaths.PreviewFile(mod.Path)),
+            ["additionalPreviews"] = WorkshopUploadPlanner.BuildAdditionalPreviewFingerprint(mod, localMetadata)
         };
 
         var installedPath = SteamWorkshopLookup.TryGetInstalledContentPath(item.Id);
@@ -1645,6 +1769,14 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 
         reportProgress?.Invoke(
             T("Applying remote info..."),
+            T("Downloading additional preview images."),
+            60);
+        metadata.AdditionalPreviewImages = await DownloadAdditionalPreviewsAsync(item.Id);
+        if (_additionalPreviewSummary != null)
+            _additionalPreviewSummary.Text = FormatAdditionalPreviews(metadata);
+
+        reportProgress?.Invoke(
+            T("Applying remote info..."),
             T("Fetching Workshop dependencies."),
             64);
         var dependencies = await SteamWorkshopLookup.GetDependenciesAsync(item.Id);
@@ -1782,6 +1914,42 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         _previewStatus.Text = target;
     }
 
+    private async Task<List<string>> DownloadAdditionalPreviewsAsync(ulong itemId)
+    {
+        if (_selected == null)
+            return [];
+
+        var previews = await SteamWorkshopLookup.GetAdditionalPreviewsAsync(itemId);
+        var imagePreviews = previews
+            .Where(preview => preview.PreviewType == Steamworks.EItemPreviewType.k_EItemPreviewType_Image &&
+                              !string.IsNullOrWhiteSpace(preview.Url))
+            .OrderBy(preview => preview.Index)
+            .ToArray();
+        var dir = WorkshopPaths.AdditionalPreviewsDirectory(_selected.Path);
+        Directory.CreateDirectory(dir);
+        foreach (var file in Directory.EnumerateFiles(dir))
+            File.Delete(file);
+
+        var result = new List<string>();
+        foreach (var preview in imagePreviews)
+        {
+            using var response = await PreviewHttpClient.GetAsync(
+                preview.Url,
+                HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            await using var source = await response.Content.ReadAsStreamAsync();
+            var preferredName = string.IsNullOrWhiteSpace(preview.OriginalFileName)
+                ? $"preview-{preview.Index + 1}.png"
+                : preview.OriginalFileName;
+            var fileName = CreateUniqueAdditionalPreviewFileName(dir, preferredName);
+            await using var destination = File.Create(Path.Combine(dir, fileName));
+            await source.CopyToAsync(destination);
+            result.Add(fileName);
+        }
+
+        return result;
+    }
+
     private void OpenDependencyPopup()
     {
         if (_selected == null)
@@ -1874,6 +2042,190 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         };
         dialog.Canceled += dialog.QueueFree;
         dialog.PopupCentered(new Vector2I(900, 620));
+    }
+
+    private void OpenAdditionalPreviewPopup()
+    {
+        if (_selected == null)
+            return;
+
+        RebuildAdditionalPreviewPopup();
+        ShowPopup(_additionalPreviewPopup, 1120, 720);
+    }
+
+    private void RebuildAdditionalPreviewPopup()
+    {
+        if (_selected == null)
+            return;
+
+        var metadata = WorkshopMetadataEditor.LoadOrCreate(_selected);
+        Clear(_additionalPreviewPopupBody);
+        _additionalPreviewPopupBody.AddChild(CreateTitle(T("Additional preview images"), 24));
+        _additionalPreviewPopupBody.AddChild(
+            CreateMuted(T("These images appear after the main Workshop preview image.")));
+        _additionalPreviewRows = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _additionalPreviewRows.AddThemeConstantOverride("separation", DenseMargin);
+        _additionalPreviewPopupBody.AddChild(_additionalPreviewRows);
+        RebuildAdditionalPreviewRows(metadata);
+        SetPopupFooter(_additionalPreviewPopup,
+            CreateButton(T("Add Image"), ImportAdditionalPreview),
+            CreateButton(T("Close"), () => _additionalPreviewPopup.Hide()));
+    }
+
+    private void RebuildAdditionalPreviewRows(WorkshopMetadata metadata)
+    {
+        if (_selected == null)
+            return;
+
+        Clear(_additionalPreviewRows);
+        var previews = metadata.AdditionalPreviewImages
+            .Select(WorkshopPaths.NormalizeAdditionalPreviewFileName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (previews.Count == 0)
+        {
+            _additionalPreviewRows.AddChild(CreateMuted(T("No additional preview images.")));
+            return;
+        }
+
+        for (var index = 0; index < previews.Count; index++)
+        {
+            var fileName = previews[index];
+            var path = WorkshopPaths.AdditionalPreviewFile(_selected.Path, fileName);
+            var image = new TextureRect
+            {
+                CustomMinimumSize = new Vector2(150f, 84f),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered
+            };
+            LoadPreviewTexture(image, path);
+
+            var label = CreateMuted(fileName);
+            label.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            label.AutowrapMode = TextServer.AutowrapMode.Off;
+            label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+
+            var up = CreateButton(T("Up"), () => MoveAdditionalPreview(fileName, -1));
+            var down = CreateButton(T("Down"), () => MoveAdditionalPreview(fileName, 1));
+            up.Disabled = index == 0;
+            down.Disabled = index == previews.Count - 1;
+            _additionalPreviewRows.AddChild(Row(
+                FixedSize(image, 150f, 84f),
+                label,
+                up,
+                down,
+                CreateButton(T("Remove"), () => RemoveAdditionalPreview(fileName))));
+        }
+    }
+
+    private void ImportAdditionalPreview()
+    {
+        if (_selected == null)
+            return;
+
+        var dialog = new FileDialog
+        {
+            FileMode = FileDialog.FileModeEnum.OpenFile,
+            Access = FileDialog.AccessEnum.Filesystem,
+            Title = T("Import Additional Preview"),
+            Filters = ["*.png ; PNG", "*.jpg, *.jpeg ; JPEG"]
+        };
+        AddChild(dialog);
+        dialog.FileSelected += source =>
+        {
+            try
+            {
+                if (_selected == null)
+                    return;
+
+                var metadata = WorkshopMetadataEditor.LoadOrCreate(_selected);
+                var dir = WorkshopPaths.AdditionalPreviewsDirectory(_selected.Path);
+                Directory.CreateDirectory(dir);
+                var fileName = CreateUniqueAdditionalPreviewFileName(dir, source);
+                File.Copy(source, Path.Combine(dir, fileName));
+                metadata.AdditionalPreviewImages.Add(fileName);
+                SaveAdditionalPreviewMetadata(metadata);
+                RebuildAdditionalPreviewPopup();
+            }
+            finally
+            {
+                dialog.QueueFree();
+            }
+        };
+        dialog.Canceled += dialog.QueueFree;
+        dialog.PopupCentered(new Vector2I(900, 620));
+    }
+
+    private void RemoveAdditionalPreview(string fileName)
+    {
+        if (_selected == null)
+            return;
+
+        var metadata = WorkshopMetadataEditor.LoadOrCreate(_selected);
+        var normalized = WorkshopPaths.NormalizeAdditionalPreviewFileName(fileName);
+        metadata.AdditionalPreviewImages.RemoveAll(item =>
+            string.Equals(WorkshopPaths.NormalizeAdditionalPreviewFileName(item), normalized, StringComparison.OrdinalIgnoreCase));
+        var path = WorkshopPaths.AdditionalPreviewFile(_selected.Path, normalized);
+        if (File.Exists(path))
+            File.Delete(path);
+        SaveAdditionalPreviewMetadata(metadata);
+        RebuildAdditionalPreviewPopup();
+    }
+
+    private void MoveAdditionalPreview(string fileName, int delta)
+    {
+        if (_selected == null)
+            return;
+
+        var metadata = WorkshopMetadataEditor.LoadOrCreate(_selected);
+        var previews = metadata.AdditionalPreviewImages
+            .Select(WorkshopPaths.NormalizeAdditionalPreviewFileName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var index = previews.FindIndex(item => string.Equals(item, fileName, StringComparison.OrdinalIgnoreCase));
+        var target = index + delta;
+        if (index < 0 || target < 0 || target >= previews.Count)
+            return;
+
+        (previews[index], previews[target]) = (previews[target], previews[index]);
+        metadata.AdditionalPreviewImages = previews;
+        SaveAdditionalPreviewMetadata(metadata);
+        RebuildAdditionalPreviewPopup();
+    }
+
+    private void SaveAdditionalPreviewMetadata(WorkshopMetadata metadata)
+    {
+        if (_selected == null)
+            return;
+
+        metadata.AdditionalPreviewImages = metadata.AdditionalPreviewImages
+            .Select(WorkshopPaths.NormalizeAdditionalPreviewFileName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        WorkshopJson.Write(WorkshopPaths.MetadataFile(_selected.Path), metadata);
+        if (_additionalPreviewSummary != null)
+            _additionalPreviewSummary.Text = FormatAdditionalPreviews(metadata);
+        SaveDraftAndRefreshChangedSlots("additionalPreviews");
+    }
+
+    private static string CreateUniqueAdditionalPreviewFileName(string directory, string source)
+    {
+        var extension = Path.GetExtension(source);
+        if (!extension.Equals(".png", StringComparison.OrdinalIgnoreCase) &&
+            !extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) &&
+            !extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase))
+            extension = ".png";
+
+        var stem = WorkshopPaths.NormalizeAdditionalPreviewFileName(Path.GetFileNameWithoutExtension(source));
+        if (string.IsNullOrWhiteSpace(stem))
+            stem = "preview";
+
+        for (var index = 0;; index++)
+        {
+            var fileName = index == 0 ? $"{stem}{extension}" : $"{stem}-{index + 1}{extension}";
+            if (!File.Exists(Path.Combine(directory, fileName)))
+                return fileName;
+        }
     }
 
     private void OpenTagPopup()
@@ -2303,6 +2655,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         Add("tags", T("Tags"), plan.Metadata.Update.Tags);
         Add("gameVersions", T("Required game versions"), plan.Metadata.Update.GameVersions);
         Add("preview", T("Preview image"), plan.Metadata.Update.Preview);
+        Add("additionalPreviews", T("Additional preview images"), plan.Metadata.Update.AdditionalPreviews);
         return rows;
 
         void Add(string key, string label, bool allowed)
@@ -2408,7 +2761,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         _content.AddChild(header);
     }
 
-    private void AddSection(string title, string? updateKey = null, string? updateLabel = null, bool updateValue = true)
+    private void AddSection(string title, string? updateKey = null, bool updateValue = true)
     {
         var panel = CreatePanel();
         panel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
@@ -2433,7 +2786,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         titleRow.AddChild(collapseButton);
         titleRow.AddChild(CreateTitle(title, 21));
         if (updateKey != null)
-            titleRow.AddChild(CreateUpdateCheck(updateKey, updateLabel ?? "Update", updateValue));
+            titleRow.AddChild(CreateUpdateCheck(updateKey, updateValue));
         root.AddChild(titleRow);
         root.AddChild(content);
 
@@ -2446,7 +2799,6 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         TextEdit editor,
         string? hint = null,
         string? updateKey = null,
-        string? updateLabel = null,
         bool updateValue = true)
     {
         var panel = CreatePanel(ModSettingsUiFactory.CreateInsetSurfaceStyle());
@@ -2462,7 +2814,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         header.AddThemeConstantOverride("separation", DenseMargin);
         header.AddChild(CreateInlineStrong(label));
         if (updateKey != null)
-            header.AddChild(CreateUpdateCheck(updateKey, updateLabel ?? "Update", updateValue));
+            header.AddChild(CreateUpdateCheck(updateKey, updateValue));
         body.AddChild(header);
         if (!string.IsNullOrWhiteSpace(hint))
             body.AddChild(CreateMuted(hint));
@@ -2654,7 +3006,6 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         Control control,
         Control? extra = null,
         string? updateKey = null,
-        string? updateLabel = null,
         bool updateValue = true)
     {
         var isLargeEditor = control is TextEdit ||
@@ -2670,14 +3021,14 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 SizeFlagsHorizontal = SizeFlags.ExpandFill,
                 Alignment = BoxContainer.AlignmentMode.Center
             };
-            compactRow.CustomMinimumSize = new Vector2(0f, 54f);
             compactRow.AddThemeConstantOverride("separation", RowGap);
 
             var rowLabel = CreateFormLabel(label);
+            compactRow.CustomMinimumSize = new Vector2(0f, Math.Max(54f, rowLabel.CustomMinimumSize.Y + 12f));
             compactRow.AddChild(rowLabel);
             compactRow.AddChild(extra == null ? control : Row(control, extra));
             if (updateKey != null)
-                compactRow.AddChild(CreateUpdateCheck(updateKey, updateLabel ?? "Update", updateValue));
+                compactRow.AddChild(CreateUpdateCheck(updateKey, updateValue));
 
             (_currentSection ?? _content).AddChild(compactRow);
             return;
@@ -2694,13 +3045,13 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         labelRow.AddThemeConstantOverride("separation", DenseMargin);
         labelRow.AddChild(CreateFormLabel(label, true));
         if (updateKey != null)
-            labelRow.AddChild(CreateUpdateCheck(updateKey, updateLabel ?? "Update", updateValue));
+            labelRow.AddChild(CreateUpdateCheck(updateKey, updateValue));
         row.AddChild(labelRow);
         row.AddChild(extra == null ? control : Row(control, extra));
         (_currentSection ?? _content).AddChild(row);
     }
 
-    private Control CreateUpdateCheck(string key, string label, bool value)
+    private Control CreateUpdateCheck(string key, bool value)
     {
         var row = new HBoxContainer
         {
@@ -2712,7 +3063,6 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
 
         row.AddChild(CreateChangeBadge(key));
         _updateChecks[key] = value;
-        row.AddChild(CreateInlineLabel(label));
         var check = new ModSettingsToggleControl(value, checkedValue =>
         {
             _updateChecks[key] = checkedValue;
@@ -2940,6 +3290,7 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
                 metadata.Dependencies.Order())),
             "gameversions" => WorkshopFingerprint.Text(FormatGameVersionFingerprintText()),
             "preview" => WorkshopFingerprint.File(WorkshopPaths.PreviewFile(_selected.Path)),
+            "additionalpreviews" => WorkshopUploadPlanner.BuildAdditionalPreviewFingerprint(_selected, metadata),
             _ => null
         };
     }
@@ -3634,13 +3985,24 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     {
         var button = new ModSettingsTextButton(text, tone, action)
         {
-            CustomMinimumSize = listRow ? new Vector2(0f, 56f) : new Vector2(ButtonMinWidth, ButtonMinHeight),
+            CustomMinimumSize = listRow
+                ? new Vector2(0f, 56f)
+                : new Vector2(ResolveButtonMinWidth(text), ButtonMinHeight),
             FocusMode = FocusModeEnum.All,
             SizeFlagsHorizontal = listRow ? SizeFlags.ExpandFill : SizeFlags.ShrinkEnd
         };
+        button.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        button.TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming;
         if (listRow)
             button.Alignment = HorizontalAlignment.Left;
         return button;
+    }
+
+    private static float ResolveButtonMinWidth(string text)
+    {
+        var hasWideText = text.Any(character => character > 127);
+        var perCharacter = hasWideText ? 18f : 11f;
+        return Mathf.Clamp(text.Length * perCharacter + 54f, ButtonMinWidth, 340f);
     }
 
     private static Button CreateSmallButton(string text, Action action,
@@ -3710,6 +4072,8 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
             return _excludePopup;
         if (_tagPopup?.Visible == true)
             return _tagPopup;
+        if (_additionalPreviewPopup?.Visible == true)
+            return _additionalPreviewPopup;
         if (_languagePopup?.Visible == true)
             return _languagePopup;
         if (_dependencyPopup?.Visible == true)
@@ -3722,10 +4086,11 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     private static Label CreateFormLabel(string text, bool expand = false)
     {
         var label = CreateMuted(text);
-        label.CustomMinimumSize = expand ? Vector2.Zero : new Vector2(180f, 0f);
+        label.CustomMinimumSize = expand ? Vector2.Zero : new Vector2(240f, 44f);
         label.SizeFlagsHorizontal = expand ? SizeFlags.ExpandFill : SizeFlags.ShrinkBegin;
-        label.AutowrapMode = expand ? TextServer.AutowrapMode.WordSmart : TextServer.AutowrapMode.Off;
-        label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        label.TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming;
+        label.VerticalAlignment = VerticalAlignment.Center;
         return label;
     }
 
@@ -3733,8 +4098,8 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
     {
         var label = CreateMuted(text);
         label.SizeFlagsHorizontal = SizeFlags.ShrinkEnd;
-        label.AutowrapMode = TextServer.AutowrapMode.Off;
-        label.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        label.TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming;
         return label;
     }
 
@@ -3875,5 +4240,12 @@ internal sealed partial class WorkshopUploaderSubmenu : NSubmenu
         Modified,
         Unchanged,
         Deleted
+    }
+
+    private enum WorkshopLegalAgreementOpenResult
+    {
+        Failed,
+        SteamOverlay,
+        ExternalBrowser
     }
 }

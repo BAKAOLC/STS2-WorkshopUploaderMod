@@ -10,6 +10,7 @@ internal static class WorkshopPaths
     private const string LegacyMetadataFileName = "workshop.json";
     private const string LegacyStateFileName = "state.json";
     private const string PreviewFileName = "preview.png";
+    private const string AdditionalPreviewsDirectoryName = "additional_previews";
     public const string PlaceholderPreviewResourceName = "STS2WorkshopUploader.Data.workshop_placeholder.png";
     public const string TitleFileName = "title.txt";
     public const string DescriptionMarkdownFileName = "description.md";
@@ -68,6 +69,24 @@ internal static class WorkshopPaths
     public static string PreviewFile(string modPath)
     {
         return Path.Combine(RecordDirectory(modPath), PreviewFileName);
+    }
+
+    public static string AdditionalPreviewsDirectory(string modPath)
+    {
+        return Path.Combine(RecordDirectory(modPath), AdditionalPreviewsDirectoryName);
+    }
+
+    public static string AdditionalPreviewFile(string modPath, string fileName)
+    {
+        return Path.Combine(AdditionalPreviewsDirectory(modPath), NormalizeAdditionalPreviewFileName(fileName));
+    }
+
+    public static string NormalizeAdditionalPreviewFileName(string fileName)
+    {
+        var name = Path.GetFileName(fileName);
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+            name = name.Replace(invalid, '_');
+        return string.IsNullOrWhiteSpace(name) ? "preview.png" : name;
     }
 
     public static string TitleFile(string modPath)

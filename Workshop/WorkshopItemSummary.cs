@@ -1,3 +1,5 @@
+using Steamworks;
+
 namespace STS2WorkshopUploader.Workshop;
 
 internal sealed record WorkshopItemSummary(
@@ -15,3 +17,14 @@ internal sealed record WorkshopEditPermission(
     ulong OwnerSteamId,
     ulong CurrentSteamId,
     bool CanEdit);
+
+internal sealed record WorkshopAdditionalPreview(
+    int Index,
+    string Url,
+    string OriginalFileName,
+    EItemPreviewType PreviewType);
+
+internal sealed record WorkshopLegalAgreementStatus(
+    bool Accepted,
+    bool NeedsAction,
+    bool CheckUnavailable = false);
